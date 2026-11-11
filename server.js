@@ -1,5 +1,5 @@
 const express = require('express');
-const cors = require('cors'); 
+const cors = require('cors');
 const app = express();
 const port = process.env.PORT || 10000;
 
@@ -45,6 +45,15 @@ app.post('/api/autopilot/deactivate', (req, res) => {
     autopilotActive = false;
     console.log("🛑 AutoPilot DESATIVADO.");
     res.json({ success: true });
+});
+
+// ESTA É A ROTA QUE ESTAVA FALTANDO
+app.get('/api/autopilot/status', (req, res) => {
+    res.json({ 
+        success: true, 
+        active: autopilotActive,
+        settings: autopilotSettings 
+    });
 });
 
 app.get('/api/autopilot/operations', (req, res) => {
