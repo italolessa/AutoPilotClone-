@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutoPilot - NextGreen</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+
+    <div class="autopilot-container">
+        
+        <header class="page-header">
+            <h1>AutoPilot</h1>
+            <p>Corretora integrada · layout configurável</p>
+        </header>
+
+        <!-- CARD 1: Holograma -->
+        <div class="card card-pilot">
+            <div class="pilot-visual-container">
+                <img src="https://app.nextgreen.pro/autopilot-office/holographic-core-v1.webp" alt="Holograma IA" class="hologram-bg">
+                <div class="overlay-tag top-center">Mercado</div>
+                <div class="overlay-tag left">FASE<br><strong>CONTEXTO</strong></div>
+                <div class="overlay-tag right">DIREÇÃO<br><strong>ANÁLISE</strong></div>
+                <div class="pilot-status-bar-overlay">
+                    <div class="status-left">
+                        <i class="fa-solid fa-briefcase text-muted" id="status-icon"></i>
+                        <div>
+                            <strong id="status-title">Sistema pronto para iniciar</strong>
+                            <span class="text-muted block small" id="status-subtitle">MERCADO</span>
+                        </div>
+                    </div>
+                    <div class="status-right">
+                        <div class="stat-mini">
+                            <span class="text-muted small">SESSÃO</span>
+                            <strong>0W · 0L</strong>
+                        </div>
+                        <div class="stat-mini">
+                            <span class="text-muted small">RESULTADO</span>
+                            <strong class="text-green">R$ 0,00</strong>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- BOTÃO PRINCIPAL (Vai mudar de estado) -->
+            <button class="btn-start-pilot" id="btn-pilot" onclick="abrirModalAtivar()">
+                <i class="fa-solid fa-play"></i> Ativar análise dos AutoPilot
+            </button>
+            <p class="text-center text-muted small mt-10" id="pilot-help-text">Salve as alterações antes de ativar</p>
+        </div>
+
+        <!-- CARD 2: Estatísticas -->
+        <div class="stats-container">
+            <div class="stat-row"><div class="stat-label"><i class="fa-solid fa-chart-simple icon-green"></i> Ops sessão</div><div class="stat-value">0</div></div>
+            <div class="stat-row"><div class="stat-label"><i class="fa-solid fa-bullseye icon-green"></i> Taxa de acerto</div><div class="stat-value">—</div></div>
+            <div class="stat-row"><div class="stat-label"><i class="fa-solid fa-arrow-trend-up icon-green"></i> P/L dia</div><div class="stat-value text-green">$ 0,00</div></div>
+            <div class="stat-row"><div class="stat-label"><i class="fa-solid fa-bolt icon-green"></i> Meta dia<br><span class="text-muted small">$ 0,00 / $ 100,00</span></div><div class="stat-value">0%</div></div>
+            <div class="stat-row"><div class="stat-label text-muted">Progresso da meta diária</div><div class="stat-value text-green">0%</div></div>
+        </div>
+
+        <!-- CARD 3: Operações -->
+        <div class="card accordion-card">
+            <div class="card-header">
+                <div class="title-group"><i class="fa-solid fa-chart-line icon-green"></i><h3>Operações realizadas</h3></div>
+                <i class="fa-solid fa-chevron-right text-muted"></i>
+            </div>
+        </div>
+
+        <!-- CARD 4: Configurações -->
+        <div class="card">
+            <div class="card-header" style="margin-bottom: 20px;">
+                <div class="title-group"><i class="fa-solid fa-gear icon-green"></i><h3>Configurações</h3></div>
+                <i class="fa-solid fa-chevron-down text-muted"></i>
+            </div>
+
+            <div class="row-2col">
+                <div class="input-group">
+                    <label>Valor de entrada</label>
+                    <div class="input-with-icon"><span>$</span><input type="number" id="entry_amount" value="5" oninput="calcularEscala()"></div>
+                </div>
+                <div class="input-group">
+                    <label>Tipo de conta</label>
+                    <div class="btn-toggle-group">
+                        <button class="btn-toggle active" onclick="setConta('demo', this)">Demo</button>
+                        <button class="btn-toggle" onclick="setConta('real', this)">Real</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="input-group mt-15">
+                <label>Controle de limites</label>
+                <div class="btn-toggle-group">
+                    <button class="btn-toggle active" onclick="setLimite('daily', this)">Meta diária</button>
+                    <button class="btn-toggle" onclick="setLimite('session', this)">Meta por sessão</button>
+                </div>
+                <small class="hint-text">Contadores acumulam até meia-noite</small>
+            </div>
+
+            <div class="row-2col mt-15">
+                <div class="input-group">
+                    <label>Meta diária (lucro)</label>
+                    <div class="input-with-icon"><span>$</span><input type="number" id="daily_goal" value="100"></div>
+                </div>
+                <div class="input-group">
+                    <label>Stop loss diário</label>
+                    <div class="input-with-icon"><span>$</span><input type="number" id="daily_stop_loss" value="50"></div>
+                </div>
+            </div>
+
+            <div class="input-group mt-15">
+                <label>Máx. operações / dia</label>
+                <input type="number" id="max_ops" value="100" class="full-input">
+            </div>
+
+            <div class="row-2col mt-25">
+                <div class="input-group">
+                    <label>Tipo de análise</label>
+                    <div class="btn-stack">
+                        <button class="btn-box active" onclick="setAnalysis('trend', this)">Tendência</button>
+                        <button class="btn-box" onclick="setAnalysis('break', this)">Quebra de padrão</button>
+                        <button class="btn-box" onclick="setAnalysis('live', this)">Ao vivo V1</button>
+                        <button class="btn-box" onclick="setAnalysis('consolidation', this)">Consolidação</button>
+                    </div>
+                    <small class="hint-text">Padrão de velas + RSI/ADX (motor atual).</small>
+                </div>
+                <div class="input-group">
+                    <label>Mercado</label>
+                    <div class="btn-row">
+                        <button class="btn-box small" onclick="setMarket('otc', this)">OTC</button>
+                        <button class="btn-box small active" onclick="setMarket('open', this)">Aberto</button>
+                        <button class="btn-box small" onclick="setMarket('both', this)">Ambos</button>
+                    </div>
+                    <small class="hint-text">Ambos = OTC + mercado aberto<br>(melhor confirmação vence)</small>
+                </div>
+            </div>
+
+            <div class="input-group mt-25">
+                <label>Ativos</label>
+                <div class="assets-selector" onclick="escolherAtivos()">
+                    <span class="icon-green">Ativos · Todos</span>
+                    <span class="text-green small">Escolher ativos</span>
+                </div>
+                <small class="hint-text">Por padrão todos estão selecionados. O AutoPilot só opera nos ativos marcados.</small>
+            </div>
+
+            <div class="input-group mt-25">
+                <label>Timeframe</label>
+                <div class="btn-row">
+                    <button class="btn-box small active" onclick="setTimeframe('M1', this)">M1</button>
+                    <button class="btn-box small" onclick="setTimeframe('M5', this)">M5</button>
+                    <button class="btn-box small" onclick="setTimeframe('both', this)">Ambos</button>
+                </div>
+                <small class="hint-text">Ambos = analisa M1 e M5 e escolhe o sinal mais forte</small>
+            </div>
+        </div>
+
+        <!-- CARD 5: Proteções -->
+        <div class="card">
+            <div class="card-header" style="margin-bottom: 15px;">
+                <div class="title-group"><i class="fa-solid fa-shield-halved icon-green"></i><h3>PROTEÇÕES INTELIGENTES</h3></div>
+            </div>
+            <div class="protection-grid">
+                <div class="protect-box" onclick="setProtection('fixed', this)"><h4>Fixo</h4><p>Sem proteção</p></div>
+                <div class="protect-box active" onclick="setProtection('martingale', this)"><h4>Martingale</h4><p>Dobra após loss</p></div>
+                <div class="protect-box" onclick="setProtection('soros', this)"><h4>Soros</h4><p>Reinveste lucro</p></div>
+            </div>
+
+            <div id="martingale-config" class="mt-20">
+                <div class="btn-toggle-group mb-15">
+                    <button class="btn-toggle" onclick="setMartingaleMode('cycles', this)">Ciclos</button>
+                    <button class="btn-toggle active" onclick="setMartingaleMode('auto', this)">Auto</button>
+                </div>
+                <div class="row-2col">
+                    <div class="input-group">
+                        <label>Níveis (gales)</label>
+                        <input type="number" id="gales" value="1" oninput="calcularEscala()">
+                        <small class="hint-text">Nº de gales após o G0. Ex.: 2 → G0, G1 e G2</small>
+                    </div>
+                    <div class="input-group">
+                        <label>Multiplicação</label>
+                        <input type="number" id="multiplicador" value="2" step="0.1" oninput="calcularEscala()">
+                        <small class="hint-text">Ex: 2 = dobra a cada gale</small>
+                    </div>
+                </div>
+                <div class="scale-box mt-15">
+                    <div class="scale-header"><span>ESCALA CALCULADA</span><span class="text-green small">recalcula após salvar</span></div>
+                    <div class="scale-values" id="scale-values"></div>
+                </div>
+                <div class="info-box mt-15">
+                    <i class="fa-solid fa-arrow-trend-up icon-green"></i>
+                    <p id="martingale-description">Calculando...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- CARD 6: Salvar -->
+        <div class="save-section">
+            <div class="save-warning"><strong>Alterações<br>não<br>salvas</strong><br>—<br>salve<br>antes<br>de<br>ativar<br>o<br>piloto</div>
+            <button class="btn-discard" onclick="descartar()">Descartar</button>
+            <button class="btn-save" onclick="salvarConfiguracoes()">
+                <i class="fa-regular fa-floppy-disk"></i> Salvar configurações
+            </button>
+        </div>
+
+    </div>
+
+    <!-- MODAL DE CONFIRMAÇÃO (Oculto por padrão) -->
+    <div class="modal-overlay" id="modal-ativar">
+        <div class="modal-content">
+            <div class="modal-header">
+                <i class="fa-solid fa-robot icon-green" style="font-size: 24px; margin-right: 10px;"></i>
+                <h2>Ativar Auto Pilot</h2>
+            </div>
+            <p class="modal-text">
+                Tem certeza que deseja LIGAR o robô no modo Piloto Automático? Serão realizadas operações 100% automáticas em sua conta de acordo com sua configuração.
+            </p>
+            <div class="modal-actions">
+                <button class="btn-cancel" onclick="fecharModal()">Cancelar</button>
+                <button class="btn-confirm" onclick="confirmarAtivacao()">Confirmar</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
