@@ -16,7 +16,6 @@
             <p>Corretora integrada · layout configurável</p>
         </header>
 
-        <!-- CARD 1: Holograma -->
         <div class="card card-pilot">
             <div class="pilot-visual-container">
                 <img src="https://app.nextgreen.pro/autopilot-office/holographic-core-v1.webp" alt="Holograma IA" class="hologram-bg">
@@ -25,33 +24,26 @@
                 <div class="overlay-tag right">DIREÇÃO<br><strong>ANÁLISE</strong></div>
                 <div class="pilot-status-bar-overlay">
                     <div class="status-left">
-                        <i class="fa-solid fa-briefcase text-muted" id="status-icon"></i>
+                        <i class="fa-solid fa-briefcase text-muted"></i>
                         <div>
                             <strong id="status-title">Sistema pronto para iniciar</strong>
                             <span class="text-muted block small" id="status-subtitle">MERCADO</span>
                         </div>
                     </div>
                     <div class="status-right">
-                        <div class="stat-mini">
-                            <span class="text-muted small">SESSÃO</span>
-                            <strong>0W · 0L</strong>
-                        </div>
-                        <div class="stat-mini">
-                            <span class="text-muted small">RESULTADO</span>
-                            <strong class="text-green">R$ 0,00</strong>
-                        </div>
+                        <div class="stat-mini"><span class="text-muted small">SESSÃO</span><strong>0W · 0L</strong></div>
+                        <div class="stat-mini"><span class="text-muted small">RESULTADO</span><strong class="text-green">R$ 0,00</strong></div>
                     </div>
                 </div>
             </div>
 
-            <!-- BOTÃO PRINCIPAL (Vai mudar de estado) -->
+            <!-- BOTÃO DE ATIVAR COM ID -->
             <button class="btn-start-pilot" id="btn-pilot" onclick="abrirModalAtivar()">
                 <i class="fa-solid fa-play"></i> Ativar análise dos AutoPilot
             </button>
             <p class="text-center text-muted small mt-10" id="pilot-help-text">Salve as alterações antes de ativar</p>
         </div>
 
-        <!-- CARD 2: Estatísticas -->
         <div class="stats-container">
             <div class="stat-row"><div class="stat-label"><i class="fa-solid fa-chart-simple icon-green"></i> Ops sessão</div><div class="stat-value">0</div></div>
             <div class="stat-row"><div class="stat-label"><i class="fa-solid fa-bullseye icon-green"></i> Taxa de acerto</div><div class="stat-value">—</div></div>
@@ -60,7 +52,6 @@
             <div class="stat-row"><div class="stat-label text-muted">Progresso da meta diária</div><div class="stat-value text-green">0%</div></div>
         </div>
 
-        <!-- CARD 3: Operações -->
         <div class="card accordion-card">
             <div class="card-header">
                 <div class="title-group"><i class="fa-solid fa-chart-line icon-green"></i><h3>Operações realizadas</h3></div>
@@ -68,7 +59,6 @@
             </div>
         </div>
 
-        <!-- CARD 4: Configurações -->
         <div class="card">
             <div class="card-header" style="margin-bottom: 20px;">
                 <div class="title-group"><i class="fa-solid fa-gear icon-green"></i><h3>Configurações</h3></div>
@@ -156,7 +146,6 @@
             </div>
         </div>
 
-        <!-- CARD 5: Proteções -->
         <div class="card">
             <div class="card-header" style="margin-bottom: 15px;">
                 <div class="title-group"><i class="fa-solid fa-shield-halved icon-green"></i><h3>PROTEÇÕES INTELIGENTES</h3></div>
@@ -195,7 +184,6 @@
             </div>
         </div>
 
-        <!-- CARD 6: Salvar -->
         <div class="save-section">
             <div class="save-warning"><strong>Alterações<br>não<br>salvas</strong><br>—<br>salve<br>antes<br>de<br>ativar<br>o<br>piloto</div>
             <button class="btn-discard" onclick="descartar()">Descartar</button>
@@ -206,7 +194,7 @@
 
     </div>
 
-    <!-- MODAL DE CONFIRMAÇÃO (Oculto por padrão) -->
+    <!-- MODAL DE CONFIRMAÇÃO -->
     <div class="modal-overlay" id="modal-ativar">
         <div class="modal-content">
             <div class="modal-header">
