@@ -7,7 +7,7 @@ app.use(cors());
 app.use(express.json());
 
 let tokenAtual = process.env.POLARIUM_TOKEN || ''; 
-let autopilotSettings = {}; 
+let autopilotSettings = {};  
 let autopilotActive = false;
 let operationsHistory = []; 
 
