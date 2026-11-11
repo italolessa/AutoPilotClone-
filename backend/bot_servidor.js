@@ -6,6 +6,7 @@ let configSolicitada = { timeframe: 'M1', mercado: 'OTC' };
 let ativosIgnoradosLista = [];
 let sinaisParaAvaliar = [];
 
+// LISTA NEGRA: Ações e Índices
 const ACOES_E_INDICES_PROIBIDOS = [
     'AAPL', 'APPLE', 'MSFT', 'MICROSOFT', 'TSLA', 'TESLA', 'AMZN', 'AMAZON', 
     'GOOGL', 'GOOGLE', 'META', 'FACEBOOK', 'NFLX', 'NETFLIX', 'NVDA', 'NVIDIA', 
@@ -24,12 +25,9 @@ global.resetarAtivos = () => {
     ultimoAtivoEnviado = null;
 };
 
-async function iniciarBotServidor(window, tokenSsid, config) {
+async function iniciarBotServidor(window, tokenSsid) {
     if (!tokenSsid) return console.error("❌ Token não configurado.");
     console.log("⏳ Iniciando SDK no servidor...");
-    
-    if (config) configSolicitada = config;
-    
     try {
         const sdkModule = await import('@quadcode-tech/client-sdk-js');
         const { ClientSdk, SsidAuthMethod, BinaryOptionsDirection } = sdkModule;
@@ -53,6 +51,7 @@ async function iniciarBotServidor(window, tokenSsid, config) {
     }
 }
 
+// --- MATEMÁTICA DOS INDICADORES ---
 function calcularEMA(dados, period) {
     if (dados.length < period) return dados[dados.length - 1];
     const k = 2 / (period + 1);
@@ -74,6 +73,7 @@ function calcularRSI(closes, period = 14) {
     return 100 - (100 / (1 + (avgGain / avgLoss)));
 }
 
+// --- O CÉREBRO FLEXÍVEL (MAIS SINAIS) ---
 function analisarGraficoComEstrategias(candles) {
     const closes = candles.map(c => c.close);
     const rsi = calcularRSI(closes);
@@ -81,22 +81,46 @@ function analisarGraficoComEstrategias(candles) {
     const ema21 = calcularEMA(closes, 21);
     
     const atual = candles[candles.length - 1];
+    const anterior = candles[candles.length - 2];
+
     const corpo = Math.abs(atual.close - atual.open);
     const pavioSuperior = atual.max - Math.max(atual.open, atual.close);
     const pavioInferior = Math.min(atual.open, atual.close) - atual.min;
 
+    // ESTRATÉGIA 1: REVERSÃO (RSI + PAVIO) - FILTROS RELAXADOS
+    // RSI < 40 (em vez de 35) e pavio apenas maior que o corpo (em vez de 1.5x)
     if (rsi < 40 && pavioInferior > corpo) {
-        return { direcao: "CALL", estrategia: "Reversão (RSI + Pavio)", confianca: 88 };
+        return { 
+            direcao: "CALL", 
+            estrategia: "Reversão (RSI + Pavio)", 
+            confianca: 88 
+        };
     }
     if (rsi > 60 && pavioSuperior > corpo) {
-        return { direcao: "PUT", estrategia: "Reversão (RSI + Pavio)", confianca: 88 };
+        return { 
+            direcao: "PUT", 
+            estrategia: "Reversão (RSI + Pavio)", 
+            confianca: 88 
+        };
     }
+
+    // ESTRATÉGIA 2: TENDÊNCIA (EMAs) - SE O RSI NÃO ESTIVER NOS EXTREMOS
+    // Se a EMA9 > EMA21 e a vela atual for de alta, compra (mesmo com RSI neutro)
     if (ema9 > ema21 && atual.close > atual.open && rsi > 50) {
-        return { direcao: "CALL", estrategia: "Tendência (EMA 9/21)", confianca: 85 };
+        return { 
+            direcao: "CALL", 
+            estrategia: "Tendência (EMA 9/21)", 
+            confianca: 85 
+        };
     }
     if (ema9 < ema21 && atual.close < atual.open && rsi < 50) {
-        return { direcao: "PUT", estrategia: "Tendência (EMA 9/21)", confianca: 85 };
+        return { 
+            direcao: "PUT", 
+            estrategia: "Tendência (EMA 9/21)", 
+            confianca: 85 
+        };
     }
+    
     return null;
 }
 
@@ -113,10 +137,15 @@ async function buscarAnaliseServidor() {
             const mercadoOk = configSolicitada.mercado === 'OTC' ? a.ticker.includes('-OTC') : !a.ticker.includes('-OTC');
             const estaAberto = a.canBeBoughtAt(now);
             const jaFoiMostrado = ativosIgnoradosLista.includes(a.ticker);
+            
             let ehProibido = false;
             for (let palavra of ACOES_E_INDICES_PROIBIDOS) {
-                if (a.ticker.toUpperCase().includes(palavra)) { ehProibido = true; break; }
+                if (a.ticker.toUpperCase().includes(palavra)) {
+                    ehProibido = true;
+                    break;
+                }
             }
+
             return mercadoOk && estaAberto && !jaFoiMostrado && !ehProibido;
         });
 
@@ -151,9 +180,16 @@ async function buscarAnaliseServidor() {
                 if (resultado) {
                     let nomeBonito = ativo.ticker.replace('-OTC', ' (OTC)');
                     return {
-                        ativo: nomeBonito, tickerReal: ativo.ticker, timeframe: configSolicitada.timeframe,
-                        direcao: resultado.direcao, confianca: resultado.confianca, estrategia: resultado.estrategia,
-                        mercado: configSolicitada.mercado, horario: getHoraProximaVela(), id: Date.now(), status: "PENDENTE"
+                        ativo: nomeBonito,
+                        tickerReal: ativo.ticker,
+                        timeframe: configSolicitada.timeframe,
+                        direcao: resultado.direcao,
+                        confianca: resultado.confianca,
+                        estrategia: resultado.estrategia,
+                        mercado: configSolicitada.mercado,
+                        horario: getHoraProximaVela(),
+                        id: Date.now(),
+                        status: "PENDENTE"
                     };
                 }
                 return null;
@@ -164,6 +200,7 @@ async function buscarAnaliseServidor() {
         if (melhoresSinais.length > 0 && global.buscando) {
             melhoresSinais.sort((a, b) => b.confianca - a.confianca);
             const campeao = melhoresSinais[0];
+            
             const agora = new Date();
             const segundosRestantes = 60 - agora.getSeconds();
             
@@ -171,7 +208,9 @@ async function buscarAnaliseServidor() {
                 ativosIgnoradosLista.push(campeao.tickerReal);
                 ultimoAtivoEnviado = campeao.tickerReal;
                 console.log(`\n🏆 [SINAL] ${campeao.ativo} | ${campeao.direcao} | ${campeao.estrategia} | Entrada: ${campeao.horario}`);
+                
                 sinaisParaAvaliar.push(campeao); 
+                
                 if (global.adicionarSinal) global.adicionarSinal(campeao);
             }
         }
@@ -182,6 +221,7 @@ async function buscarAnaliseServidor() {
     }
 }
 
+// --- AUTO-AVALIAÇÃO ---
 async function verificarResultados() {
     if (!sdk || sinaisParaAvaliar.length === 0) return;
     const agora = new Date();
@@ -199,10 +239,13 @@ async function verificarResultados() {
                 const velaFechada = candles[candles.length - 2];
                 let result = "EMPATE";
                 if (sinal.direcao === "CALL" || sinal.direcao === "COMPRA") {
-                    if (velaFechada.close > velaFechada.open) result = "WIN"; else if (velaFechada.close < velaFechada.open) result = "LOSS";
+                    if (velaFechada.close > velaFechada.open) result = "WIN";
+                    else if (velaFechada.close < velaFechada.open) result = "LOSS";
                 } else if (sinal.direcao === "PUT" || sinal.direcao === "VENDA") {
-                    if (velaFechada.close < velaFechada.open) result = "WIN"; else if (velaFechada.close > velaFechada.open) result = "LOSS";
+                    if (velaFechada.close < velaFechada.open) result = "WIN";
+                    else if (velaFechada.close > velaFechada.open) result = "LOSS";
                 }
+
                 sinal.status = result;
                 console.log(`📊 [RESULTADO] ${sinal.ativo} | ${sinal.direcao} | ${result}`);
                 if (global.adicionarSinal) global.adicionarSinal(sinal);
@@ -212,6 +255,7 @@ async function verificarResultados() {
             sinaisParaRemover.push(i);
         }
     }
+
     for (let i = sinaisParaRemover.length - 1; i >= 0; i--) {
         sinaisParaAvaliar.splice(sinaisParaRemover[i], 1);
     }

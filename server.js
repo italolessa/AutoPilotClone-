@@ -1,56 +1,118 @@
 const express = require('express');
 const cors = require('cors');
+const axios = require('axios');
 const app = express();
 const port = process.env.PORT || 10000;
 
 app.use(cors());
 app.use(express.json());
 
+let sinaisEncontrados = [];
+let configuracaoAtual = { timeframe: 'M1', mercado: 'OTC', ignorarAtivo: null };
 let tokenAtual = process.env.POLARIUM_TOKEN || ''; 
-let autopilotSettings = {}; 
-let autopilotActive = false;
-let operationsHistory = []; 
 
-// Importa o Cérebro (que está na pasta backend)
-const { iniciarBotServidor } = require('./backend/bot_servidor');
+app.get('/health', (req, res) => res.status(200).send('OK'));
 
-// --- ROTAS DO TOKEN ---
-app.post('/api/atualizar-token', (req, res) => {
+app.post('/api/atualizar-token', async (req, res) => {
     const novoToken = req.body.token;
-    if (novoToken === tokenAtual) return res.json({ success: true, message: "Token já ativo" });
+    if (!novoToken) return res.status(400).json({ error: "Token inválido" });
+
+    if (novoToken === tokenAtual) {
+        console.log("✅ Token já está ativo no servidor. Ignorando reinicialização.");
+        return res.json({ success: true, message: "Token já ativo" });
+    }
+
     tokenAtual = novoToken;
-    console.log("🔄 Novo Token recebido.");
+    console.log("🔄 Novo Token recebido! Iniciando conexão local e atualizando Render...");
+    
+    const { iniciarBotServidor } = require('./backend/bot_servidor');
+    iniciarBotServidor(null, tokenAtual);
+
+    try {
+        const apiKey = process.env.RENDER_API_KEY;
+        const serviceId = process.env.RENDER_SERVICE_ID;
+
+        if (apiKey && serviceId) {
+            const response = await axios.get(`https://api.render.com/v1/services/${serviceId}/env-vars`, {
+                headers: { Authorization: `Bearer ${apiKey}` }
+            });
+            
+            let envVars = response.data.map(item => {
+                let val = item.envVar ? item.envVar : item; 
+                if (val.key === 'POLARIUM_TOKEN') val.value = novoToken;
+                return val;
+            });
+
+            await axios.put(`https://api.render.com/v1/services/${serviceId}/env-vars`, envVars, {
+                headers: { Authorization: `Bearer ${apiKey}` }
+            });
+            
+            console.log("✅ Token salvo permanentemente no Render!");
+        }
+    } catch (error) {
+        console.error("❌ Erro ao salvar token via API:", error.message);
+    }
+
+    res.json({ success: true, message: "Token atualizado!" });
+});
+
+app.post('/api/configurar', (req, res) => {
+    sinaisEncontrados = []; 
+    configuracaoAtual = req.body;
+    if (global.definirConfiguracao) global.definirConfiguracao(configuracaoAtual);
+    global.buscando = true; 
+    console.log(`⚙️ Busca ativada: ${configuracaoAtual.timeframe} | ${configuracaoAtual.mercado}`);
     res.json({ success: true });
 });
 
-// --- ROTAS DO AUTOPILOT ---
+// ROTA DE PARAR
+app.post('/api/parar', (req, res) => {
+    global.buscando = false;
+    sinaisEncontrados = []; 
+    console.log("🛑 Comando de parada recebido. Radar desligado.");
+    res.json({ success: true });
+});
+
+// NOVA ROTA: RESETAR TUDO (Limpa a memória de ativos)
+app.post('/api/resetar', (req, res) => {
+    global.buscando = false;
+    sinaisEncontrados = []; 
+    if (global.resetarAtivos) global.resetarAtivos(); // Chama a função no cérebro
+    console.log("🧹 Comando de reset recebido. Memória de ativos limpa.");
+    res.json({ success: true });
+});
+
+app.get('/api/sinais', (req, res) => res.json(sinaisEncontrados));
+
+global.adicionarSinal = (sinal) => {
+    sinaisEncontrados.unshift(sinal);
+    global.buscando = false; 
+};
+
+const { iniciarBotServidor } = require('./backend/bot_servidor');
+if (tokenAtual && tokenAtual !== 'COLE_SEU_TOKEN_AQUI') {
+    iniciarBotServidor(null, tokenAtual);
+}
+// --- ROTAS DO AUTOPILOT (NOVAS) ---
 app.put('/api/autopilot/settings', (req, res) => {
-    autopilotSettings = req.body;
-    console.log("⚙️ Configurações salvas:", autopilotSettings);
+    configuracaoAtual = req.body;
+    console.log("⚙️ Configurações do AutoPilot salvas:", configuracaoAtual);
     res.json({ success: true });
 });
 
 app.post('/api/autopilot/activate', (req, res) => {
-    if (!tokenAtual) return res.status(400).json({ error: "Token não configurado." });
-    autopilotActive = true;
+    global.buscando = true;
     console.log("🤖 AutoPilot ATIVADO.");
-    
-    // CHAMA O CÉREBRO PASSANDO AS CONFIGURAÇÕES
-    iniciarBotServidor(null, tokenAtual, autopilotSettings); 
-    
     res.json({ success: true, enabled: true });
 });
 
 app.post('/api/autopilot/deactivate', (req, res) => {
-    autopilotActive = false;
+    global.buscando = false;
     console.log("🛑 AutoPilot DESATIVADO.");
     res.json({ success: true });
 });
 
-app.get('/api/autopilot/operations', (req, res) => {
-    res.json({ success: true, operations: operationsHistory });
+app.get('/api/autopilot/status', (req, res) => {
+    res.json({ success: true, active: global.buscando || false, settings: configuracaoAtual });
 });
-
-app.listen(port, () => {
-    console.log(`✅ Servidor API rodando na porta ${port}`);
-});
+app.listen(port, () => console.log(`✅ Servidor API rodando na porta ${port}`));
