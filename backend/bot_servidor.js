@@ -1,14 +1,13 @@
 const WS_URL = 'wss://ws.trade.polariumbroker.com/echo/websocket';
 let sdk;
-let isBuscando = false;
 let configSolicitada = { timeframe: 'M1', mercado: 'OTC', analysis_mode: 'trend', entry_amount: 5 };
 
 // --- TRAVAS DE SEGURANÇA ---
-let ultimaEntradaTs = 0;
 let operacaoEmAndamento = false;
-let operacaoAtual = null;
-let sinalJaExecutado = null;
+let ultimaEntradaTs = 0;
 let nivelMartingale = 0;
+let operacaoAtual = null;
+let sinaisAgendados = new Set();
 const INTERVALO_ENTRE_ENTRADAS_MS = 5 * 60 * 1000; // 5 minutos
 
 // --- INDICADORES ---
@@ -74,40 +73,124 @@ async function iniciarBotServidor(window, tokenSsid, config) {
         sdk = await ClientSdk.create(WS_URL, 82, new SsidAuthMethod(tokenSsid));
         global.BinaryOptionsDirection = BinaryOptionsDirection;
         console.log("✅ SDK inicializado! Robô em modo AUTOMÁTICO.");
-
-        setInterval(async () => {
-            if (!isBuscando && global.buscando) {
-                await buscarEExecutar();
-            }
-        }, 15000);
-
-        setInterval(async () => {
-            if (global.buscando && operacaoAtual) {
-                await verificarResultado();
-            }
-        }, 5000);
-
     } catch (error) {
         console.error("❌ Erro ao conectar SDK:", error.message);
     }
 }
 
-// --- VERIFICAR RESULTADO E MARTINGALE ---
-async function verificarResultado() {
-    if (!operacaoAtual) return;
-
+// --- RECEBER SINAL E AGENDAR ---
+async function processarSinal(signal) {
+    if (operacaoEmAndamento) return console.log("⏳ Operação em andamento. Ignorando.");
+    
+    // Trava de 5 minutos (só bloqueia se estiver no G0)
     const agora = Date.now();
-    const seconds = configSolicitada.timeframe_mode === 'M5' ? 300 : 60;
-    const tempoExpiracao = seconds * 1000;
+    if (nivelMartingale === 0 && (agora - ultimaEntradaTs) < INTERVALO_ENTRE_ENTRADAS_MS) {
+        return console.log("⏳ Aguardando tempo de respiro de 5 min...");
+    }
 
-    if (agora < operacaoAtual.horarioEntradaTs + tempoExpiracao + 5000) return;
-    if (operacaoAtual.resultadoChecado) return;
+    if (sinaisAgendados.has(signal.id)) return console.log("⏳ Sinal já agendado.");
+
+    console.log(`📡 Sinal recebido: ${signal.direcao} em ${signal.ativo} às ${signal.horario_entrada}`);
+
+    const now = new Date();
+    const [h, m] = signal.horario_entrada.split(':');
+    const execTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), parseInt(h), parseInt(m), 0);
+    const delay = execTime.getTime() - now.getTime();
+
+    if (delay < 0) return console.log("⚠️ Horário já passou.");
+
+    sinaisAgendados.add(signal.id);
+    setTimeout(async () => {
+        await executarOrdem(signal);
+        sinaisAgendados.delete(signal.id);
+    }, delay);
+}
+
+// --- EXECUTAR ORDEM ---
+async function executarOrdem(signal) {
+    if (!sdk || operacaoEmAndamento) return;
+    operacaoEmAndamento = true;
 
     try {
+        const binaryOptions = await sdk.binaryOptions();
+        const actives = binaryOptions.getActives();
+        
+        // Remove o sufixo "(OTC)" ou espaços se houver, para achar o ticker certo
+        const tickerLimpo = signal.ativo.replace(" (OTC)", "").replace("/", ""); 
+        const ativo = actives.find(a => a.ticker === tickerLimpo || a.ticker === tickerLimpo + "-OTC");
+        
+        if (!ativo) {
+            console.log(`❌ Ativo ${signal.ativo} não encontrado.`);
+            operacaoEmAndamento = false;
+            return;
+        }
+
+        const seconds = configSolicitada.timeframe_mode === 'M5' ? 300 : 60;
+        const instr = await ativo.instruments();
+        const disp = instr.getAvailableForBuyAt(sdk.currentTime());
+        
+        // =========================================================
+        // CORREÇÃO DA VELA: Usa a propriedade 'duration' exata
+        // =========================================================
+        const instrumento = disp.find(i => i.duration === seconds);
+        
+        if (!instrumento) {
+            console.log(`⚠️ Instrumento de ${seconds}s não encontrado no momento.`);
+            operacaoEmAndamento = false;
+            return;
+        }
+
+        const balances = await sdk.balances();
+        const demoBalance = balances.getBalances().find(b => b.type === 'demo');
+
+        const mult = configSolicitada.martingale_auto_multiplier || 2;
+        const entryAmount = configSolicitada.entry_amount * Math.pow(mult, nivelMartingale);
+
+        await binaryOptions.buy(
+            instrumento,
+            signal.direcao === "CALL" ? global.BinaryOptionsDirection.Call : global.BinaryOptionsDirection.Put,
+            entryAmount,
+            demoBalance
+        );
+
+        console.log(`✅ ORDEM EXECUTADA: ${signal.ativo} | ${signal.direcao} | Valor: $${entryAmount.toFixed(2)} | G${nivelMartingale}`);
+
+        // Salva a operação atual para verificar o resultado depois
+        operacaoAtual = {
+            ativoId: ativo.id,
+            ativo: ativo.ticker,
+            direcao: signal.direcao,
+            horarioEntradaTs: Date.now(),
+            resultadoChecado: false
+        };
+
+        // Agenda a verificação do resultado para daqui a X segundos + 5s de margem
+        setTimeout(async () => {
+            await verificarResultado();
+        }, (seconds * 1000) + 5000);
+
+    } catch (err) {
+        console.error("❌ Erro ao executar:", err.message);
+        operacaoEmAndamento = false;
+    }
+}
+
+// --- VERIFICAR RESULTADO E MARTINGALE ---
+async function verificarResultado() {
+    if (!operacaoAtual) {
+        operacaoEmAndamento = false;
+        return;
+    }
+
+    try {
+        const seconds = configSolicitada.timeframe_mode === 'M5' ? 300 : 60;
         const layer = await sdk.realTimeChartDataLayer(operacaoAtual.ativoId, seconds);
         const candles = await layer.fetchAllCandles(Math.floor(Date.now() / 1000) - (3 * seconds));
 
-        if (!candles || candles.length < 2) return;
+        if (!candles || candles.length < 2) {
+            operacaoEmAndamento = false;
+            return;
+        }
 
         const velaResultado = candles[candles.length - 2];
         let resultado = "EMPATE";
@@ -123,13 +206,12 @@ async function verificarResultado() {
         operacaoAtual.resultadoChecado = true;
         console.log(`📊 [RESULTADO] ${operacaoAtual.ativo} | ${operacaoAtual.direcao} | ${resultado} (G${nivelMartingale})`);
 
-        // AQUI É ONDE A TRAVA DE 5 MINUTOS É ATIVADA (ultimaEntradaTs = Date.now())
         if (resultado === "WIN") {
             console.log(`✅ WIN! Voltando ao G0. Trava de 5 minutos ativada.`);
             nivelMartingale = 0;
             operacaoAtual = null;
             operacaoEmAndamento = false;
-            ultimaEntradaTs = Date.now(); 
+            ultimaEntradaTs = Date.now(); // ATIVA A TRAVA DE 5 MIN
         } else if (resultado === "LOSS") {
             const galesPermitidos = configSolicitada.martingale_auto_levels || 1;
             if (nivelMartingale < galesPermitidos) {
@@ -137,20 +219,20 @@ async function verificarResultado() {
                 console.log(`❌ LOSS! Aplicando Martingale G${nivelMartingale}. Aguardando próxima vela...`);
                 operacaoAtual = null;
                 operacaoEmAndamento = false;
-                ultimaEntradaTs = 0; // Zera a trava para entrar no martingale na próxima vela
+                ultimaEntradaTs = 0; // ZERA A TRAVA PARA ENTRAR NO MARTINGALE NA PRÓXIMA VELA
             } else {
                 console.log(`❌ LOSS no último gale (G${nivelMartingale}). Resetando ciclo. Trava de 5 min ativada.`);
                 nivelMartingale = 0;
                 operacaoAtual = null;
                 operacaoEmAndamento = false;
-                ultimaEntradaTs = Date.now(); 
+                ultimaEntradaTs = Date.now(); // ATIVA A TRAVA DE 5 MIN
             }
         } else {
             console.log(`⚖️ Empate. Resetando ciclo. Trava de 5 min ativada.`);
             nivelMartingale = 0;
             operacaoAtual = null;
             operacaoEmAndamento = false;
-            ultimaEntradaTs = Date.now(); 
+            ultimaEntradaTs = Date.now(); // ATIVA A TRAVA DE 5 MIN
         }
 
     } catch (err) {
@@ -158,144 +240,6 @@ async function verificarResultado() {
         operacaoEmAndamento = false;
         operacaoAtual = null;
     }
-}
-
-// --- BUSCA E EXECUÇÃO ---
-async function buscarEExecutar() {
-    if (!sdk || !global.buscando) return;
-    if (isBuscando) return;
-    isBuscando = true;
-
-    try {
-        const positions = await sdk.positions();
-        if (positions.getAllPositions().length > 0 || operacaoEmAndamento) return;
-
-        const agora = Date.now();
-        
-        // TRAVA DE 5 MINUTOS: Só bloqueia se estiver no G0
-        if (nivelMartingale === 0 && (agora - ultimaEntradaTs) < INTERVALO_ENTRE_ENTRADAS_MS) {
-            isBuscando = false;
-            return;
-        }
-
-        const binaryOptions = await sdk.binaryOptions();
-        const actives = binaryOptions.getActives();
-        const now = sdk.currentTime();
-        const seconds = configSolicitada.timeframe_mode === 'M5' ? 300 : 60;
-
-        const ativosFiltrados = actives.filter(a => {
-            const mercadoOk = configSolicitada.mercado === 'OTC' ? a.ticker.includes('-OTC') : !a.ticker.includes('-OTC');
-            return mercadoOk && a.canBeBoughtAt(now);
-        });
-
-        if (ativosFiltrados.length === 0) {
-            isBuscando = false;
-            return;
-        }
-
-        for (let ativo of ativosFiltrados) {
-            if (!global.buscando) break;
-
-            const layer = await sdk.realTimeChartDataLayer(ativo.id, seconds);
-            const candles = await layer.fetchAllCandles(Math.floor(Date.now() / 1000) - (30 * seconds));
-
-            if (!candles || candles.length < 20) continue;
-
-            const direcao = analisarGrafico(candles, configSolicitada.analysis_mode);
-
-            if (direcao) {
-                const signalKey = `${ativo.id}-${candles[candles.length - 2].time}-${direcao}`;
-                if (sinalJaExecutado === signalKey) continue;
-
-                console.log(`🚀 [AUTOPILOT] Sinal de ${direcao} em ${ativo.ticker} (${configSolicitada.timeframe_mode}). Executando G${nivelMartingale}...`);
-
-                try {
-                    const instruments = await ativo.instruments();
-                    const available = instruments.getAvailableForBuyAt(sdk.currentTime());
-
-                    if (!available || available.length === 0) {
-                        console.log(`⚠️ Nenhum instrumento disponível para ${ativo.ticker} agora.`);
-                        continue;
-                    }
-
-                    // =========================================================
-                    // LÓGICA CORRIGIDA BASEADA NO SEU bot.js
-                    // =========================================================
-                    let instrumentoCorreto = available.find(inst => {
-                        try {
-                            // No SDK do Quadcode, a expiração é o timestamp final.
-                            const expirationTs = inst.expiration; 
-                            const nowTs = Date.now();
-                            
-                            // Calcula a diferença em segundos
-                            const diff = Math.floor((expirationTs - nowTs) / 1000);
-                            
-                            // Para M1 (60s): aceita se faltar entre 10 e 65 segundos.
-                            // Para M5 (300s): aceita se faltar entre 10 e 305 segundos.
-                            const margemMin = 10;
-                            const margemMax = seconds === 60 ? 65 : 305;
-
-                            return diff >= margemMin && diff <= margemMax;
-                        } catch (e) {
-                            return false;
-                        }
-                    });
-
-                    if (!instrumentoCorreto) {
-                        console.log(`⚠️ Instrumento de ${seconds}s não encontrado (tempo restante inválido). Pulando ${ativo.ticker}.`);
-                        continue;
-                    }
-
-                    const instrument = instrumentoCorreto;
-                    const balances = await sdk.balances();
-                    const demoBalance = balances.getBalances().find(b => b.type === 'demo');
-                    
-                    if (!demoBalance) {
-                        console.log("⚠️ Saldo demo não encontrado.");
-                        continue;
-                    }
-
-                    const mult = configSolicitada.martingale_auto_multiplier || 2;
-                    const entryAmount = configSolicitada.entry_amount * Math.pow(mult, nivelMartingale);
-
-                    operacaoEmAndamento = true;
-                    sinalJaExecutado = signalKey;
-
-                    // NOTA: Não atualizamos ultimaEntradaTs aqui. Só atualizamos no verificarResultado (WIN/LOSS final)
-                    
-                    await binaryOptions.buy(
-                        instrument,
-                        direcao === "CALL" ? global.BinaryOptionsDirection.Call : global.BinaryOptionsDirection.Put,
-                        entryAmount,
-                        demoBalance
-                    );
-
-                    operacaoAtual = {
-                        ativoId: ativo.id,
-                        ativo: ativo.ticker,
-                        direcao: direcao,
-                        horarioEntradaTs: Date.now(),
-                        resultadoChecado: false
-                    };
-
-                    console.log(`✅ ORDEM EXECUTADA: ${ativo.ticker} | ${direcao} | Valor: $${entryAmount.toFixed(2)} | G${nivelMartingale} | Exp: ${seconds}s`);
-                    break; 
-                } catch (err) {
-                    operacaoEmAndamento = false;
-                    console.error("❌ Erro ao executar:", err.message);
-                }
-            }
-        }
-    } catch (error) {
-        console.error("❌ Erro na varredura:", error.message);
-    } finally {
-        isBuscando = false;
-    }
-}
-
-async function processarSinal(signal) {
-    if (operacaoEmAndamento) return console.log("⏳ Operação em andamento.");
-    console.log(`📡 Sinal manual recebido: ${signal.direcao} em ${signal.ativo}`);
 }
 
 module.exports = { iniciarBotServidor, processarSinal };
