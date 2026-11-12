@@ -14,6 +14,9 @@ let autopilotActive = false;
 let wsClient = null;
 let operationsHistory = [];
 
+// Importa as funções do Cérebro (Aqui estava o erro, agora está com as chaves)
+const { iniciarBotServidor, processarSinal } = require('./backend/bot_servidor');
+
 // Cria o servidor HTTP
 const server = http.createServer(app);
 
@@ -26,7 +29,6 @@ wss.on('connection', (ws) => {
         try {
             const data = JSON.parse(msg);
             if (data.type === 'SIGNAL') {
-                const { processarSinal } = require('./backend/bot_servidor');
                 await processarSinal(data.signal);
             }
         } catch (e) {
@@ -42,7 +44,6 @@ app.post('/api/atualizar-token', (req, res) => {
     tokenAtual = novoToken;
     console.log("🔄 Novo Token recebido.");
     if (autopilotActive) {
-        const { iniciarBotServidor } = require('./backend/bot_servidor');
         iniciarBotServidor(null, tokenAtual, configuracaoAtual);
     }
     res.json({ success: true });
@@ -60,16 +61,13 @@ app.post('/api/autopilot/activate', (req, res) => {
     global.buscando = true;
     console.log("🤖 AutoPilot ATIVADO.");
 
-    // Conecta ao WebSocket local (mesma porta do servidor HTTP)
     if (!wsClient || wsClient.readyState === WebSocket.CLOSED) {
-        // Usa a mesma porta do processo
         wsClient = new WebSocket(`ws://127.0.0.1:${port}`);
         wsClient.on('open', () => console.log("🔗 Conectado ao Cérebro via WebSocket."));
         wsClient.on('error', (e) => console.error("❌ Erro WS:", e.message));
         wsClient.on('close', () => console.log("🔌 WebSocket fechado."));
     }
 
-    const { iniciarBotServidor } = require('./backend/bot_servidor');
     iniciarBotServidor(null, tokenAtual, configuracaoAtual);
     res.json({ success: true, enabled: true });
 });
@@ -104,5 +102,5 @@ app.get('/api/autopilot/operations', (req, res) => {
     res.json({ success: true, operations: operationsHistory });
 });
 
-// Importante: usar server.listen, não app.listen
+// Importante: usar server.listen para o WebSocket funcionar na mesma porta
 server.listen(port, () => console.log(`✅ Servidor API rodando na porta ${port}`));
