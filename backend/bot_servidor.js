@@ -110,6 +110,15 @@ async function buscarEExecutar() {
         const actives = binaryOptions.getActives();
         const now = sdk.currentTime();
 
+        // Define o tempo do timeframe corretamente (Corrige o "undefined" do log)
+        const seconds = configSolicitada.timeframe_mode === 'M5' ? 300 : 60;
+
+        // TRAVA DE MATURIDADE DA VELA: Só opera nos primeiros 15 segundos da vela
+        const segundosNaVela = new Date().getSeconds() % seconds;
+        if (segundosNaVela > 15 && segundosNaVela < (seconds - 5)) {
+             return;
+        }
+
         const ativosFiltrados = actives.filter(a => {
             const mercadoOk = configSolicitada.mercado === 'OTC' ? a.ticker.includes('-OTC') : !a.ticker.includes('-OTC');
             return mercadoOk && a.canBeBoughtAt(now);
@@ -120,7 +129,6 @@ async function buscarEExecutar() {
         for (let ativo of ativosFiltrados) {
             if (!global.buscando) break;
 
-            const seconds = configSolicitada.timeframe === 'M5' ? 300 : 60;
             const layer = await sdk.realTimeChartDataLayer(ativo.id, seconds);
             const candles = await layer.fetchAllCandles(Math.floor(Date.now() / 1000) - (30 * seconds));
 
@@ -132,11 +140,10 @@ async function buscarEExecutar() {
                 // Trava 3: Sinal já executado nesta vela
                 const signalKey = `${ativo.id}-${candles[candles.length - 2].time}-${direcao}`;
                 if (sinalJaExecutado === signalKey) {
-                    console.log(`⏳ Sinal já executado nesta vela. Aguardando próxima.`);
                     continue;
                 }
 
-                console.log(`🚀 [AUTOPILOT] Sinal de ${direcao} em ${ativo.ticker} (${configSolicitada.timeframe}). Executando...`);
+                console.log(`🚀 [AUTOPILOT] Sinal de ${direcao} em ${ativo.ticker} (${configSolicitada.timeframe_mode}). Executando...`);
 
                 try {
                     const firstActiveInstruments = await ativo.instruments();
@@ -150,10 +157,7 @@ async function buscarEExecutar() {
 
                     const balances = await sdk.balances();
                     const demoBalance = balances.getBalances().find(b => b.type === 'demo');
-                    if (!demoBalance) {
-                        console.log("❌ Saldo Demo não encontrado.");
-                        continue;
-                    }
+                    if (!demoBalance) continue;
 
                     // Trava 4: Bloqueio total antes de comprar
                     operacaoEmAndamento = true;
@@ -168,14 +172,12 @@ async function buscarEExecutar() {
                     );
 
                     console.log(`✅ ORDEM EXECUTADA: ${ativo.ticker} | ${direcao} | $${configSolicitada.entry_amount} | Exp: ${seconds}s`);
-                    console.log(`⏳ Robô travado por 5 minutos para garantir 1 entrada por vez.`);
-
-                    // Trava 5: Libera após 5 minutos
+                    
                     if (timeoutLiberacao) clearTimeout(timeoutLiberacao);
                     timeoutLiberacao = setTimeout(() => {
                         operacaoEmAndamento = false;
                         sinalJaExecutado = null;
-                        console.log(`🔄 Ciclo de 5 minutos finalizado. Robô liberado.`);
+                        console.log(`🔄 Ciclo de 5 minutos finalizado.`);
                     }, 300000);
 
                     break;
@@ -192,11 +194,10 @@ async function buscarEExecutar() {
     }
 }
 
-// Mantém a função processarSinal para o server.js (caso queira enviar sinal manual)
+// Mantém a função para o server.js (para receber sinais manuais do frontend, se houver)
 async function processarSinal(signal) {
-    if (operacaoEmAndamento) return console.log("⏳ Operação em andamento. Ignorando sinal manual.");
+    if (operacaoEmAndamento) return console.log("⏳ Operação em andamento.");
     console.log(`📡 Sinal manual recebido: ${signal.direcao} em ${signal.ativo}`);
-    // Aqui você pode agendar a execução manual se quiser
 }
 
 module.exports = { iniciarBotServidor, processarSinal };
