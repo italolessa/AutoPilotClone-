@@ -1,79 +1,3 @@
-const WS_URL = 'wss://ws.trade.polariumbroker.com/echo/websocket'; 
-let sdk;
-let isBuscando = false;
-let configSolicitada = { timeframe: 'M1', mercado: 'OTC', analysis_mode: 'trend' };
-
-// --- MATEMÁTICA DOS INDICADORES ---
-function calcularEMA(dados, period) {
-    if (dados.length < period) return dados[dados.length - 1];
-    const k = 2 / (period + 1);
-    let ema = dados.slice(0, period).reduce((a, b) => a + b, 0) / period;
-    for (let i = period; i < dados.length; i++) ema = dados[i] * k + ema * (1 - k);
-    return ema;
-}
-
-function calcularRSI(closes, period = 14) {
-    if (closes.length < period) return 50;
-    let gains = 0, losses = 0;
-    for (let i = closes.length - period; i < closes.length; i++) {
-        const diff = closes[i] - closes[i - 1];
-        if (diff >= 0) gains += diff; else losses -= diff;
-    }
-    let avgGain = gains / period;
-    let avgLoss = losses / period;
-    if (avgLoss === 0) return 100;
-    return 100 - (100 / (1 + (avgGain / avgLoss)));
-}
-
-function analisarGraficoComEstrategias(candles, modo) {
-    const closes = candles.map(c => c.close);
-    const atual = candles[candles.length - 1];
-    const anterior = candles[candles.length - 2];
-    const rsi = calcularRSI(closes);
-
-    if (modo === 'trend') {
-        const ema9 = calcularEMA(closes, 9);
-        const ema21 = calcularEMA(closes, 21);
-        if (ema9 > ema21 && atual.close > atual.open && rsi > 50) return "CALL";
-        if (ema9 < ema21 && atual.close < atual.open && rsi < 50) return "PUT";
-    }
-    
-    // Estratégia de Reversão (RSI + Pavio) - Padrão do seu projeto
-    const corpo = Math.abs(atual.close - atual.open);
-    const pavioSuperior = atual.max - Math.max(atual.open, atual.close);
-    const pavioInferior = Math.min(atual.open, atual.close) - atual.min;
-
-    if (rsi < 40 && pavioInferior > corpo) return "CALL";
-    if (rsi > 60 && pavioSuperior > corpo) return "PUT";
-
-    return null;
-}
-
-// --- EXECUÇÃO AUTOMÁTICA ---
-async function iniciarBotServidor(window, tokenSsid, config) {
-    if (!tokenSsid) return console.error("❌ Token não configurado.");
-    configSolicitada = config;
-    
-    console.log("⏳ Iniciando SDK no servidor...");
-    try {
-        const sdkModule = await import('@quadcode-tech/client-sdk-js');
-        const { ClientSdk, SsidAuthMethod, BinaryOptionsDirection } = sdkModule;
-        sdk = await ClientSdk.create(WS_URL, 82, new SsidAuthMethod(tokenSsid));
-        global.BinaryOptionsDirection = BinaryOptionsDirection;
-
-        console.log("✅ SDK inicializado! Robô em modo AUTOMÁTICO.");
-
-        setInterval(async () => {
-            if (!isBuscando && global.buscando) {
-                await buscarEExecutar();
-            }
-        }, 10000); // Busca a cada 10 segundos
-
-    } catch (error) {
-        console.error("❌ Erro ao conectar no servidor:", error.message);
-    }
-}
-
 async function buscarEExecutar() {
     if (!sdk || !global.buscando) return;
     isBuscando = true;
@@ -101,27 +25,48 @@ async function buscarEExecutar() {
             const direcao = analisarGraficoComEstrategias(candles, configSolicitada.analysis_mode);
 
             if (direcao) {
-                // AQUI ELE EXECUTA A ORDEM
                 console.log(`🚀 [AUTOPILOT] Sinal de ${direcao} em ${ativo.ticker}. Executando ordem...`);
                 
                 try {
-                    const active = binaryOptions.getActive(ativo.id);
-                    await binaryOptions.buy(
-                        active, 
-                        direcao, 
-                        60, // Expiração em 60 segundos
-                        configSolicitada.entry_amount, 
-                        global.BinaryOptionsDirection[direcao]
-                    );
-                    console.log(`✅ ORDEM EXECUTADA: ${ativo.ticker} | ${direcao} | Valor: $${configSolicitada.entry_amount}`);
+                    // --- AQUI ESTÁ A CORREÇÃO BASEADA NA DOCUMENTAÇÃO ---
+                    // 1. Pegamos o instrumento do ativo (não usamos o ativo direto)
+                    const instruments = await ativo.instruments();
                     
-                    // Para de buscar após executar uma ordem (ou pode continuar, se preferir)
+                    // 2. Pegamos a lista de instrumentos disponíveis para compra AGORA
+                    const availableInstruments = instruments.getAvailableForBuyAt(sdk.currentTime());
+                    
+                    if (availableInstruments.length === 0) {
+                        console.log(`⚠️ Nenhum instrumento disponível para ${ativo.ticker} agora.`);
+                        continue;
+                    }
+                    
+                    // 3. Escolhemos o primeiro instrumento disponível (que tem o tempo de expiração correto)
+                    const instrument = availableInstruments[0];
+                    
+                    // 4. Encontramos o saldo da conta Demo para debitar
+                    const balances = await sdk.balances();
+                    const demoBalance = balances.getBalances().find(b => b.type === 'demo');
+                    
+                    if (!demoBalance) {
+                        console.log("❌ Saldo Demo não encontrado.");
+                        continue;
+                    }
+
+                    // 5. Executamos a compra passando o INSTRUMENTO, a direção, o valor e o saldo
+                    await binaryOptions.buy(
+                        instrument, 
+                        direcao === "CALL" ? global.BinaryOptionsDirection.Call : global.BinaryOptionsDirection.Put, 
+                        configSolicitada.entry_amount, 
+                        demoBalance
+                    );
+                    
+                    console.log(`✅ ORDEM EXECUTADA: ${ativo.ticker} | ${direcao} | Valor: $${configSolicitada.entry_amount}`);
                     global.buscando = false; 
                     
                 } catch (err) {
                     console.error("❌ Erro ao executar ordem:", err.message);
                 }
-                break; // Sai do loop de ativos
+                break;
             }
         }
     } catch (error) {
@@ -130,5 +75,3 @@ async function buscarEExecutar() {
         isBuscando = false;
     }
 }
-
-module.exports = { iniciarBotServidor };
