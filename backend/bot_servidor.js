@@ -109,25 +109,13 @@ async function buscarEExecutar() {
         const binaryOptions = await sdk.binaryOptions();
         const actives = binaryOptions.getActives();
         const now = sdk.currentTime();
-
-        // Define o tempo do timeframe corretamente (resolve o 'both' e 'undefined')
-        let seconds = 60; // Padrão M1
-        if (configSolicitada.timeframe_mode === 'M5') seconds = 300;
-        if (configSolicitada.timeframe_mode === 'both') seconds = 60; // Se for 'both', prioriza M1
-
-        // TRAVA DE MATURIDADE DA VELA: Só opera nos primeiros 20 segundos da vela
-        // Isso garante que o instrumento de 60s esteja sempre disponível
-        const segundosNaVela = new Date().getSeconds() % seconds;
-        if (segundosNaVela > 20) {
-             // Se estiver no meio da vela, espera o próximo ciclo
-             return;
-        }
+        
+        // Define o tempo para buscar os candles (M1 = 60, M5 = 300)
+        const seconds = configSolicitada.timeframe_mode === 'M5' ? 300 : 60;
 
         const ativosFiltrados = actives.filter(a => {
             const mercadoOk = configSolicitada.mercado === 'OTC' ? a.ticker.includes('-OTC') : !a.ticker.includes('-OTC');
-            // Filtro extra: ignora ações se não for OTC (para evitar Nike, Alibaba, etc.)
-            const isAcao = a.ticker.includes('NIKE') || a.ticker.includes('ALIBABA') || a.ticker.includes('GS');
-            return mercadoOk && a.canBeBoughtAt(now) && !isAcao;
+            return mercadoOk && a.canBeBoughtAt(now);
         });
 
         if (ativosFiltrados.length === 0) return;
@@ -149,23 +137,16 @@ async function buscarEExecutar() {
                 console.log(`🚀 [AUTOPILOT] Sinal de ${direcao} em ${ativo.ticker} (${configSolicitada.timeframe_mode}). Executando...`);
 
                 try {
-                    const firstActiveInstruments = await ativo.instruments();
+                    // Pega os instrumentos disponíveis e usa o primeiro (como o original)
+                    const instruments = await ativo.instruments();
+                    const available = instruments.getAvailableForBuyAt(sdk.currentTime());
                     
-                    // CORREÇÃO CRÍTICA: Pega o instrumento disponível e verifica o tempo de expiração real
-                    const availableInstruments = firstActiveInstruments.getAvailableForBuyAt(sdk.currentTime());
-                    
-                    if (!availableInstruments || availableInstruments.length === 0) {
+                    if (!available || available.length === 0) {
                         console.log(`⚠️ Nenhum instrumento disponível para ${ativo.ticker} agora.`);
                         continue;
                     }
 
-                    // Tenta achar um instrumento com a duração exata (60s ou 300s)
-                    let instrumentoCorreto = availableInstruments.find(inst => inst.duration === seconds);
-                    
-                    // Se não achar o exato, pega o primeiro que estiver disponível (o SDK já filtra)
-                    if (!instrumentoCorreto) {
-                        instrumentoCorreto = availableInstruments[0];
-                    }
+                    const instrument = available[0];
 
                     const balances = await sdk.balances();
                     const demoBalance = balances.getBalances().find(b => b.type === 'demo');
@@ -176,19 +157,19 @@ async function buscarEExecutar() {
                     sinalJaExecutado = signalKey;
 
                     await binaryOptions.buy(
-                        instrumentoCorreto,
+                        instrument,
                         direcao === "CALL" ? global.BinaryOptionsDirection.Call : global.BinaryOptionsDirection.Put,
                         configSolicitada.entry_amount,
                         demoBalance
                     );
 
-                    console.log(`✅ ORDEM EXECUTADA: ${ativo.ticker} | ${direcao} | $${configSolicitada.entry_amount} | Exp: ${seconds}s`);
+                    console.log(`✅ ORDEM EXECUTADA: ${ativo.ticker} | ${direcao} | $${configSolicitada.entry_amount}`);
                     
                     if (timeoutLiberacao) clearTimeout(timeoutLiberacao);
                     timeoutLiberacao = setTimeout(() => {
                         operacaoEmAndamento = false;
                         sinalJaExecutado = null;
-                        console.log(`🔄 Ciclo de 5 minutos finalizado. Robô liberado.`);
+                        console.log(`🔄 Ciclo de 5 minutos finalizado.`);
                     }, 300000);
 
                     break;
@@ -204,3 +185,12 @@ async function buscarEExecutar() {
         isBuscando = false;
     }
 }
+
+// Mantém a função para o server.js
+async function processarSinal(signal) {
+    if (operacaoEmAndamento) return console.log("⏳ Operação em andamento.");
+    console.log(`📡 Sinal manual recebido: ${signal.direcao} em ${signal.ativo}`);
+}
+
+// ESTA É A LINHA QUE FALTAVA E RESOLVE O ERRO:
+module.exports = { iniciarBotServidor, processarSinal };
