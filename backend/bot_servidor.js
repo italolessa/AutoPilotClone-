@@ -6,10 +6,9 @@ let configSolicitada = { timeframe: 'M1', mercado: 'OTC', analysis_mode: 'trend'
 // --- TRAVAS DE SEGURANÇA ---
 let ultimaEntradaTs = 0;
 let operacaoEmAndamento = false;
-let operacaoAtual = null; // Guarda os dados da ordem aberta para saber o resultado
-let timeoutLiberacao = null;
+let operacaoAtual = null; 
 let sinalJaExecutado = null;
-let nivelMartingale = 0; // 0 = G0, 1 = G1, etc.
+let nivelMartingale = 0; 
 const INTERVALO_ENTRE_ENTRADAS_MS = 5 * 60 * 1000; // 5 minutos
 
 // --- INDICADORES ---
@@ -76,14 +75,12 @@ async function iniciarBotServidor(window, tokenSsid, config) {
         global.BinaryOptionsDirection = BinaryOptionsDirection;
         console.log("✅ SDK inicializado! Robô em modo AUTOMÁTICO.");
 
-        // Loop de busca de sinais
         setInterval(async () => {
             if (!isBuscando && global.buscando) {
                 await buscarEExecutar();
             }
         }, 15000);
 
-        // NOVO: Loop de verificação de resultado (roda a cada 5 segundos)
         setInterval(async () => {
             if (global.buscando && operacaoAtual) {
                 await verificarResultado();
@@ -99,26 +96,19 @@ async function iniciarBotServidor(window, tokenSsid, config) {
 async function verificarResultado() {
     if (!operacaoAtual) return;
 
-    // Se já passou o tempo de expiração + 5 segundos
     const agora = Date.now();
-    const tempoExpiracao = (configSolicitada.timeframe_mode === 'M5' ? 300 : 60) * 1000;
+    const seconds = configSolicitada.timeframe_mode === 'M5' ? 300 : 60;
+    const tempoExpiracao = seconds * 1000;
     
-    if (agora < operacaoAtual.horarioEntradaTs + tempoExpiracao + 5000) {
-        return; // Ainda está no tempo da vela
-    }
-
-    // Se já checou o resultado desta ordem
+    if (agora < operacaoAtual.horarioEntradaTs + tempoExpiracao + 5000) return;
     if (operacaoAtual.resultadoChecado) return;
 
     try {
-        const seconds = configSolicitada.timeframe_mode === 'M5' ? 300 : 60;
         const layer = await sdk.realTimeChartDataLayer(operacaoAtual.ativoId, seconds);
-        // Pega as últimas 3 velas para ver a que fechou
         const candles = await layer.fetchAllCandles(Math.floor(Date.now() / 1000) - (3 * seconds));
         
         if (!candles || candles.length < 2) return;
 
-        // A vela anterior (candles[candles.length - 2]) é a que a nossa ordem estava dentro
         const velaResultado = candles[candles.length - 2];
         let resultado = "EMPATE";
 
@@ -134,21 +124,19 @@ async function verificarResultado() {
         console.log(`📊 [RESULTADO] ${operacaoAtual.ativo} | ${operacaoAtual.direcao} | ${resultado} (G${nivelMartingale})`);
 
         if (resultado === "WIN") {
-            // WIN: Reseta o martingale, libera o cooldown de 5 min
             console.log(`✅ WIN! Voltando ao G0 e aguardando 5 minutos de respiro.`);
             nivelMartingale = 0;
             operacaoAtual = null;
             operacaoEmAndamento = false;
-            ultimaEntradaTs = Date.now(); // Marca o fim do ciclo para os 5 min
+            ultimaEntradaTs = Date.now();
         } else if (resultado === "LOSS") {
-            // LOSS: Prepara o Martingale (dobra o valor)
             const galesPermitidos = configSolicitada.martingale_auto_levels || 1;
             if (nivelMartingale < galesPermitidos) {
                 nivelMartingale++;
                 console.log(`❌ LOSS! Aplicando Martingale G${nivelMartingale}. Aguardando próxima vela para entrar.`);
-                // Não libera operacaoEmAndamento. A próxima entrada será o martingale.
-                operacaoAtual = null; // Limpa a ordem atual, mas mantém o robô travado
-                ultimaEntradaTs = 0; // Zera o cooldown para poder entrar imediatamente
+                operacaoAtual = null; 
+                operacaoEmAndamento = false; 
+                ultimaEntradaTs = 0; 
             } else {
                 console.log(`❌ LOSS no último gale (G${nivelMartingale}). Resetando ciclo.`);
                 nivelMartingale = 0;
@@ -157,7 +145,6 @@ async function verificarResultado() {
                 ultimaEntradaTs = Date.now();
             }
         } else {
-            // Empate
             console.log(`⚖️ Empate. Resetando ciclo.`);
             nivelMartingale = 0;
             operacaoAtual = null;
@@ -179,23 +166,15 @@ async function buscarEExecutar() {
     isBuscando = true;
 
     try {
-        // Trava 1: Posição aberta na Polarium
         const positions = await sdk.positions();
-        const posicoesAbertas = positions.getAllPositions();
-        if (posicoesAbertas.length > 0 || operacaoEmAndamento) {
-            return;
-        }
+        if (positions.getAllPositions().length > 0 || operacaoEmAndamento) return;
 
-        // Trava 2: Cooldown de 5 minutos (Só bloqueia se estivermos no G0 e o tempo não passou)
         const agora = Date.now();
-        if (nivelMartingale === 0 && (agora - ultimaEntradaTs) < INTERVALO_ENTRE_ENTRADAS_MS) {
-            return;
-        }
+        if (nivelMartingale === 0 && (agora - ultimaEntradaTs) < INTERVALO_ENTRE_ENTRADAS_MS) return;
 
         const binaryOptions = await sdk.binaryOptions();
         const actives = binaryOptions.getActives();
         const now = sdk.currentTime();
-        
         const seconds = configSolicitada.timeframe_mode === 'M5' ? 300 : 60;
 
         const ativosFiltrados = actives.filter(a => {
@@ -230,13 +209,33 @@ async function buscarEExecutar() {
                         continue;
                     }
 
-                    const instrument = available[0];
+                    // =========================================================
+                    // CORREÇÃO CRÍTICA: FILTRAR O INSTRUMENTO PELO TEMPO CORRETO
+                    // =========================================================
+                    const nowTs = Date.now();
+                    let instrumentoCorreto = available.find(inst => {
+                        try {
+                            const endTime = inst.purchaseEndTime(); 
+                            const diffSeconds = Math.round((endTime.getTime() - nowTs) / 1000);
+                            // Aceita uma margem de 2 segundos para trás ou para frente
+                            return Math.abs(diffSeconds - seconds) <= 2;
+                        } catch (e) {
+                            return false;
+                        }
+                    });
+
+                    if (!instrumentoCorreto) {
+                        console.log(`⚠️ Instrumento de ${seconds}s não encontrado. Pulando ${ativo.ticker}.`);
+                        continue;
+                    }
+
+                    const instrument = instrumentoCorreto;
+                    // =========================================================
 
                     const balances = await sdk.balances();
                     const demoBalance = balances.getBalances().find(b => b.type === 'demo');
                     if (!demoBalance) continue;
 
-                    // Calcula o valor da entrada (Martingale dobra)
                     const mult = configSolicitada.martingale_auto_multiplier || 2;
                     const entryAmount = configSolicitada.entry_amount * Math.pow(mult, nivelMartingale);
 
@@ -251,7 +250,6 @@ async function buscarEExecutar() {
                         demoBalance
                     );
 
-                    // Salva os dados da operação para verificar o resultado depois
                     operacaoAtual = {
                         ativoId: ativo.id,
                         ativo: ativo.ticker,
@@ -260,8 +258,7 @@ async function buscarEExecutar() {
                         resultadoChecado: false
                     };
 
-                    console.log(`✅ ORDEM EXECUTADA: ${ativo.ticker} | ${direcao} | Valor: $${entryAmount.toFixed(2)} | G${nivelMartingale}`);
-                    
+                    console.log(`✅ ORDEM EXECUTADA: ${ativo.ticker} | ${direcao} | Valor: $${entryAmount.toFixed(2)} | G${nivelMartingale} | Exp: ${seconds}s`);
                     break;
                 } catch (err) {
                     operacaoEmAndamento = false;
