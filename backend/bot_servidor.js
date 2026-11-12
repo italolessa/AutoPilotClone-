@@ -1,9 +1,16 @@
 const WS_URL = 'wss://ws.trade.polariumbroker.com/echo/websocket';
 let sdk;
+let isBuscando = false;
 let configSolicitada = { timeframe: 'M1', mercado: 'OTC', analysis_mode: 'trend', entry_amount: 5 };
-let operacaoEmAndamento = false;
-let sinaisAgendados = new Set();
 
+// --- TRAVAS DE SEGURANÇA ---
+let ultimaEntradaTs = 0;
+let operacaoEmAndamento = false;
+let timeoutLiberacao = null;
+let sinalJaExecutado = null;
+const INTERVALO_ENTRE_ENTRADAS_MS = 5 * 60 * 1000; // 5 minutos
+
+// --- INDICADORES ---
 function calcularEMA(dados, period) {
     if (!dados || dados.length < period) return null;
     const k = 2 / (period + 1);
@@ -31,7 +38,7 @@ function calcularRSI(closes, period = 14) {
 
 function analisarGrafico(candles, modo) {
     if (!candles || candles.length < 30) return null;
-    const fechadas = candles.slice(0, -1);
+    const fechadas = candles.slice(0, -1); // ignora vela em formação
     const closes = fechadas.map(c => c.close);
     const atual = fechadas[fechadas.length - 1];
     const rsi = calcularRSI(closes);
@@ -52,6 +59,7 @@ function analisarGrafico(candles, modo) {
     return null;
 }
 
+// --- INICIALIZAÇÃO ---
 async function iniciarBotServidor(window, tokenSsid, config) {
     if (!tokenSsid) return console.error("❌ Token não configurado.");
     configSolicitada = config || configSolicitada;
@@ -64,69 +72,131 @@ async function iniciarBotServidor(window, tokenSsid, config) {
         const { ClientSdk, SsidAuthMethod, BinaryOptionsDirection } = sdkModule;
         sdk = await ClientSdk.create(WS_URL, 82, new SsidAuthMethod(tokenSsid));
         global.BinaryOptionsDirection = BinaryOptionsDirection;
-        console.log("✅ SDK inicializado!");
+        console.log("✅ SDK inicializado! Robô em modo AUTOMÁTICO.");
+
+        // Loop de análise: roda a cada 15 segundos
+        setInterval(async () => {
+            if (!isBuscando && global.buscando) {
+                await buscarEExecutar();
+            }
+        }, 15000);
+
     } catch (error) {
         console.error("❌ Erro ao conectar SDK:", error.message);
     }
 }
 
-async function processarSinal(signal) {
-    if (operacaoEmAndamento) return console.log("⏳ Operação em andamento. Ignorando.");
-    if (sinaisAgendados.has(signal.id)) return console.log("⏳ Sinal já agendado.");
-
-    console.log(`📡 Sinal recebido: ${signal.direcao} em ${signal.ativo} às ${signal.horario_entrada}`);
-
-    const now = new Date();
-    const [h, m] = signal.horario_entrada.split(':');
-    const execTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), parseInt(h), parseInt(m), 0);
-    const delay = execTime.getTime() - now.getTime();
-
-    if (delay < 0) return console.log("⚠️ Horário já passou.");
-
-    sinaisAgendados.add(signal.id);
-    setTimeout(async () => {
-        await executarOrdem(signal);
-        sinaisAgendados.delete(signal.id);
-    }, delay);
-}
-
-async function executarOrdem(signal) {
-    if (!sdk || operacaoEmAndamento) return;
-    operacaoEmAndamento = true;
+// --- BUSCA E EXECUÇÃO ---
+async function buscarEExecutar() {
+    if (!sdk || !global.buscando) return;
+    if (isBuscando) return;
+    isBuscando = true;
 
     try {
+        // Trava 1: Posição aberta na Polarium
+        const positions = await sdk.positions();
+        const posicoesAbertas = positions.getAllPositions();
+        if (posicoesAbertas.length > 0 || operacaoEmAndamento) {
+            return;
+        }
+
+        // Trava 2: Cooldown de 5 minutos
+        const agora = Date.now();
+        if ((agora - ultimaEntradaTs) < INTERVALO_ENTRE_ENTRADAS_MS) {
+            return;
+        }
+
         const binaryOptions = await sdk.binaryOptions();
         const actives = binaryOptions.getActives();
-        const ativo = actives.find(a => a.ticker === signal.ativo);
-        if (!ativo) { operacaoEmAndamento = false; return; }
+        const now = sdk.currentTime();
 
-        const seconds = configSolicitada.timeframe === 'M5' ? 300 : 60;
-        const instr = await ativo.instruments();
-        const disp = instr.getAvailableForBuyAt(sdk.currentTime());
-        const instrumento = disp.find(i => i.duration === seconds);
-        if (!instrumento) { operacaoEmAndamento = false; return; }
+        const ativosFiltrados = actives.filter(a => {
+            const mercadoOk = configSolicitada.mercado === 'OTC' ? a.ticker.includes('-OTC') : !a.ticker.includes('-OTC');
+            return mercadoOk && a.canBeBoughtAt(now);
+        });
 
-        const balances = await sdk.balances();
-        const demoBalance = balances.getBalances().find(b => b.type === 'demo');
+        if (ativosFiltrados.length === 0) return;
 
-        await binaryOptions.buy(
-            instrumento,
-            signal.direcao === "CALL" ? global.BinaryOptionsDirection.Call : global.BinaryOptionsDirection.Put,
-            configSolicitada.entry_amount,
-            demoBalance
-        );
+        for (let ativo of ativosFiltrados) {
+            if (!global.buscando) break;
 
-        console.log(`✅ ORDEM EXECUTADA: ${signal.ativo} | ${signal.direcao} | $${configSolicitada.entry_amount}`);
+            const seconds = configSolicitada.timeframe === 'M5' ? 300 : 60;
+            const layer = await sdk.realTimeChartDataLayer(ativo.id, seconds);
+            const candles = await layer.fetchAllCandles(Math.floor(Date.now() / 1000) - (30 * seconds));
 
-        setTimeout(() => {
-            operacaoEmAndamento = false;
-            console.log(`🔄 Liberado para nova operação.`);
-        }, (seconds * 1000) + 5000);
+            if (!candles || candles.length < 20) continue;
 
-    } catch (err) {
-        console.error("❌ Erro ao executar:", err.message);
-        operacaoEmAndamento = false;
+            const direcao = analisarGrafico(candles, configSolicitada.analysis_mode);
+
+            if (direcao) {
+                // Trava 3: Sinal já executado nesta vela
+                const signalKey = `${ativo.id}-${candles[candles.length - 2].time}-${direcao}`;
+                if (sinalJaExecutado === signalKey) {
+                    console.log(`⏳ Sinal já executado nesta vela. Aguardando próxima.`);
+                    continue;
+                }
+
+                console.log(`🚀 [AUTOPILOT] Sinal de ${direcao} em ${ativo.ticker} (${configSolicitada.timeframe}). Executando...`);
+
+                try {
+                    const firstActiveInstruments = await ativo.instruments();
+                    const availableInstruments = firstActiveInstruments.getAvailableForBuyAt(sdk.currentTime());
+                    const instrumentoCorreto = availableInstruments.find(inst => inst.duration === seconds);
+
+                    if (!instrumentoCorreto) {
+                        console.log(`⚠️ Instrumento de ${seconds}s não encontrado.`);
+                        continue;
+                    }
+
+                    const balances = await sdk.balances();
+                    const demoBalance = balances.getBalances().find(b => b.type === 'demo');
+                    if (!demoBalance) {
+                        console.log("❌ Saldo Demo não encontrado.");
+                        continue;
+                    }
+
+                    // Trava 4: Bloqueio total antes de comprar
+                    operacaoEmAndamento = true;
+                    ultimaEntradaTs = Date.now();
+                    sinalJaExecutado = signalKey;
+
+                    await binaryOptions.buy(
+                        instrumentoCorreto,
+                        direcao === "CALL" ? global.BinaryOptionsDirection.Call : global.BinaryOptionsDirection.Put,
+                        configSolicitada.entry_amount,
+                        demoBalance
+                    );
+
+                    console.log(`✅ ORDEM EXECUTADA: ${ativo.ticker} | ${direcao} | $${configSolicitada.entry_amount} | Exp: ${seconds}s`);
+                    console.log(`⏳ Robô travado por 5 minutos para garantir 1 entrada por vez.`);
+
+                    // Trava 5: Libera após 5 minutos
+                    if (timeoutLiberacao) clearTimeout(timeoutLiberacao);
+                    timeoutLiberacao = setTimeout(() => {
+                        operacaoEmAndamento = false;
+                        sinalJaExecutado = null;
+                        console.log(`🔄 Ciclo de 5 minutos finalizado. Robô liberado.`);
+                    }, 300000);
+
+                    break;
+                } catch (err) {
+                    operacaoEmAndamento = false;
+                    console.error("❌ Erro ao executar:", err.message);
+                }
+            }
+        }
+    } catch (error) {
+        console.error("❌ Erro na varredura:", error.message);
+    } finally {
+        isBuscando = false;
     }
+}
+
+// Mantém a função processarSinal para o server.js (caso queira enviar sinal manual)
+async function processarSinal(signal) {
+    if (operacaoEmAndamento) return console.log("⏳ Operação em andamento. Ignorando sinal manual.");
+    console.log(`📡 Sinal manual recebido: ${signal.direcao} em ${signal.ativo}`);
+    // Aqui você pode agendar a execução manual se quiser
 }
 
 module.exports = { iniciarBotServidor, processarSinal };
