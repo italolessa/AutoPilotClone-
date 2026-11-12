@@ -6,9 +6,9 @@ let configSolicitada = { timeframe: 'M1', mercado: 'OTC', analysis_mode: 'trend'
 // --- TRAVAS DE SEGURANÇA ---
 let ultimaEntradaTs = 0;
 let operacaoEmAndamento = false;
-let operacaoAtual = null; 
+let operacaoAtual = null;
 let sinalJaExecutado = null;
-let nivelMartingale = 0; 
+let nivelMartingale = 0;
 const INTERVALO_ENTRE_ENTRADAS_MS = 5 * 60 * 1000; // 5 minutos
 
 // --- INDICADORES ---
@@ -99,14 +99,14 @@ async function verificarResultado() {
     const agora = Date.now();
     const seconds = configSolicitada.timeframe_mode === 'M5' ? 300 : 60;
     const tempoExpiracao = seconds * 1000;
-    
+
     if (agora < operacaoAtual.horarioEntradaTs + tempoExpiracao + 5000) return;
     if (operacaoAtual.resultadoChecado) return;
 
     try {
         const layer = await sdk.realTimeChartDataLayer(operacaoAtual.ativoId, seconds);
         const candles = await layer.fetchAllCandles(Math.floor(Date.now() / 1000) - (3 * seconds));
-        
+
         if (!candles || candles.length < 2) return;
 
         const velaResultado = candles[candles.length - 2];
@@ -133,10 +133,10 @@ async function verificarResultado() {
             const galesPermitidos = configSolicitada.martingale_auto_levels || 1;
             if (nivelMartingale < galesPermitidos) {
                 nivelMartingale++;
-                console.log(`❌ LOSS! Aplicando Martingale G${nivelMartingale}. Aguardando próxima vela para entrar.`);
-                operacaoAtual = null; 
-                operacaoEmAndamento = false; 
-                ultimaEntradaTs = 0; 
+                console.log(`❌ LOSS! Aplicando Martingale G${nivelMartingale}. Aguardando próxima vela...`);
+                operacaoAtual = null;
+                operacaoEmAndamento = false;
+                ultimaEntradaTs = 0;
             } else {
                 console.log(`❌ LOSS no último gale (G${nivelMartingale}). Resetando ciclo.`);
                 nivelMartingale = 0;
@@ -203,22 +203,21 @@ async function buscarEExecutar() {
                 try {
                     const instruments = await ativo.instruments();
                     const available = instruments.getAvailableForBuyAt(sdk.currentTime());
-                    
+
                     if (!available || available.length === 0) {
                         console.log(`⚠️ Nenhum instrumento disponível para ${ativo.ticker} agora.`);
                         continue;
                     }
 
                     // =========================================================
-                    // CORREÇÃO CRÍTICA: FILTRAR O INSTRUMENTO PELO TEMPO CORRETO
+                    // CORREÇÃO DEFINITIVA: USA durationRemainingForPurchase()
                     // =========================================================
-                    const nowTs = Date.now();
                     let instrumentoCorreto = available.find(inst => {
                         try {
-                            const endTime = inst.purchaseEndTime(); 
-                            const diffSeconds = Math.round((endTime.getTime() - nowTs) / 1000);
-                            // Aceita uma margem de 2 segundos para trás ou para frente
-                            return Math.abs(diffSeconds - seconds) <= 2;
+                            const remaining = inst.durationRemainingForPurchase();
+                            // O SDK retorna a duração restante em segundos.
+                            // Para M1, aceita margem de 5s (ex: 55s-65s)
+                            return Math.abs(remaining - seconds) <= 5;
                         } catch (e) {
                             return false;
                         }
@@ -230,7 +229,6 @@ async function buscarEExecutar() {
                     }
 
                     const instrument = instrumentoCorreto;
-                    // =========================================================
 
                     const balances = await sdk.balances();
                     const demoBalance = balances.getBalances().find(b => b.type === 'demo');
