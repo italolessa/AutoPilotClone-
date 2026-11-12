@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const http = require('http');
 const WebSocket = require('ws');
 const app = express();
 const port = process.env.PORT || 10000;
@@ -12,6 +13,27 @@ let configuracaoAtual = { timeframe: 'M1', mercado: 'OTC', analysis_mode: 'trend
 let autopilotActive = false;
 let wsClient = null;
 let operationsHistory = [];
+
+// Cria o servidor HTTP
+const server = http.createServer(app);
+
+// Anexa o WebSocket ao mesmo servidor HTTP
+const wss = new WebSocket.Server({ server });
+
+wss.on('connection', (ws) => {
+    console.log("🔗 Cérebro conectado ao server.js via WebSocket.");
+    ws.on('message', async (msg) => {
+        try {
+            const data = JSON.parse(msg);
+            if (data.type === 'SIGNAL') {
+                const { processarSinal } = require('./backend/bot_servidor');
+                await processarSinal(data.signal);
+            }
+        } catch (e) {
+            console.error("Erro ao processar msg WS:", e.message);
+        }
+    });
+});
 
 app.post('/api/atualizar-token', (req, res) => {
     const novoToken = req.body.token;
@@ -38,9 +60,10 @@ app.post('/api/autopilot/activate', (req, res) => {
     global.buscando = true;
     console.log("🤖 AutoPilot ATIVADO.");
 
-    // Conecta ao WebSocket interno (127.0.0.1 resolve o problema do localhost no Render)
+    // Conecta ao WebSocket local (mesma porta do servidor HTTP)
     if (!wsClient || wsClient.readyState === WebSocket.CLOSED) {
-        wsClient = new WebSocket('ws://127.0.0.1:8080');
+        // Usa a mesma porta do processo
+        wsClient = new WebSocket(`ws://127.0.0.1:${port}`);
         wsClient.on('open', () => console.log("🔗 Conectado ao Cérebro via WebSocket."));
         wsClient.on('error', (e) => console.error("❌ Erro WS:", e.message));
         wsClient.on('close', () => console.log("🔌 WebSocket fechado."));
@@ -81,4 +104,5 @@ app.get('/api/autopilot/operations', (req, res) => {
     res.json({ success: true, operations: operationsHistory });
 });
 
-app.listen(port, () => console.log(`✅ Servidor API rodando na porta ${port}`));
+// Importante: usar server.listen, não app.listen
+server.listen(port, () => console.log(`✅ Servidor API rodando na porta ${port}`));

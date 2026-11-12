@@ -1,4 +1,3 @@
-const WebSocket = require('ws');
 const WS_URL = 'wss://ws.trade.polariumbroker.com/echo/websocket';
 let sdk;
 let configSolicitada = { timeframe: 'M1', mercado: 'OTC', analysis_mode: 'trend', entry_amount: 5 };
@@ -57,6 +56,8 @@ async function iniciarBotServidor(window, tokenSsid, config) {
     if (!tokenSsid) return console.error("❌ Token não configurado.");
     configSolicitada = config || configSolicitada;
 
+    if (sdk) return console.log("✅ SDK já está inicializado.");
+
     console.log("⏳ Iniciando SDK no servidor...");
     try {
         const sdkModule = await import('@quadcode-tech/client-sdk-js');
@@ -64,18 +65,6 @@ async function iniciarBotServidor(window, tokenSsid, config) {
         sdk = await ClientSdk.create(WS_URL, 82, new SsidAuthMethod(tokenSsid));
         global.BinaryOptionsDirection = BinaryOptionsDirection;
         console.log("✅ SDK inicializado!");
-
-        // Mantém o servidor WebSocket na porta 8080
-        const wss = new WebSocket.Server({ port: 8080 });
-        wss.on('connection', (ws) => {
-            console.log("🔗 Cérebro conectado ao server.js via WebSocket.");
-            ws.on('message', async (msg) => {
-                try {
-                    const data = JSON.parse(msg);
-                    if (data.type === 'SIGNAL') await processarSinal(data.signal);
-                } catch (e) { console.error("Erro ao processar msg WS:", e.message); }
-            });
-        });
     } catch (error) {
         console.error("❌ Erro ao conectar SDK:", error.message);
     }
@@ -85,7 +74,7 @@ async function processarSinal(signal) {
     if (operacaoEmAndamento) return console.log("⏳ Operação em andamento. Ignorando.");
     if (sinaisAgendados.has(signal.id)) return console.log("⏳ Sinal já agendado.");
 
-    console.log(`📡 Sinal recebido via WS: ${signal.direcao} em ${signal.ativo} às ${signal.horario_entrada}`);
+    console.log(`📡 Sinal recebido: ${signal.direcao} em ${signal.ativo} às ${signal.horario_entrada}`);
 
     const now = new Date();
     const [h, m] = signal.horario_entrada.split(':');
@@ -140,4 +129,4 @@ async function executarOrdem(signal) {
     }
 }
 
-module.exports = { iniciarBotServidor };
+module.exports = { iniciarBotServidor, processarSinal };
