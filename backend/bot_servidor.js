@@ -100,6 +100,7 @@ async function verificarResultado() {
     const seconds = configSolicitada.timeframe_mode === 'M5' ? 300 : 60;
     const tempoExpiracao = seconds * 1000;
 
+    // Espera a vela fechar + 5 segundos de folga para o servidor processar
     if (agora < operacaoAtual.horarioEntradaTs + tempoExpiracao + 5000) return;
     if (operacaoAtual.resultadoChecado) return;
 
@@ -109,6 +110,7 @@ async function verificarResultado() {
 
         if (!candles || candles.length < 2) return;
 
+        // Pega a vela que já fechou (penúltima)
         const velaResultado = candles[candles.length - 2];
         let resultado = "EMPATE";
 
@@ -124,11 +126,11 @@ async function verificarResultado() {
         console.log(`📊 [RESULTADO] ${operacaoAtual.ativo} | ${operacaoAtual.direcao} | ${resultado} (G${nivelMartingale})`);
 
         if (resultado === "WIN") {
-            console.log(`✅ WIN! Voltando ao G0 e aguardando 5 minutos de respiro.`);
+            console.log(`✅ WIN! Voltando ao G0 e ativando trava de 5 minutos.`);
             nivelMartingale = 0;
             operacaoAtual = null;
             operacaoEmAndamento = false;
-            ultimaEntradaTs = Date.now();
+            ultimaEntradaTs = Date.now(); // Ativa a trava de 5 min
         } else if (resultado === "LOSS") {
             const galesPermitidos = configSolicitada.martingale_auto_levels || 1;
             if (nivelMartingale < galesPermitidos) {
@@ -136,20 +138,20 @@ async function verificarResultado() {
                 console.log(`❌ LOSS! Aplicando Martingale G${nivelMartingale}. Aguardando próxima vela...`);
                 operacaoAtual = null;
                 operacaoEmAndamento = false;
-                ultimaEntradaTs = 0;
+                ultimaEntradaTs = 0; // ZERA A TRAVA para entrar no martingale na próxima vela
             } else {
-                console.log(`❌ LOSS no último gale (G${nivelMartingale}). Resetando ciclo.`);
+                console.log(`❌ LOSS no último gale (G${nivelMartingale}). Resetando ciclo e ativando trava de 5 minutos.`);
                 nivelMartingale = 0;
                 operacaoAtual = null;
                 operacaoEmAndamento = false;
-                ultimaEntradaTs = Date.now();
+                ultimaEntradaTs = Date.now(); // Ativa a trava de 5 min
             }
         } else {
-            console.log(`⚖️ Empate. Resetando ciclo.`);
+            console.log(`⚖️ Empate. Resetando ciclo e ativando trava de 5 minutos.`);
             nivelMartingale = 0;
             operacaoAtual = null;
             operacaoEmAndamento = false;
-            ultimaEntradaTs = Date.now();
+            ultimaEntradaTs = Date.now(); // Ativa a trava de 5 min
         }
 
     } catch (err) {
@@ -170,7 +172,13 @@ async function buscarEExecutar() {
         if (positions.getAllPositions().length > 0 || operacaoEmAndamento) return;
 
         const agora = Date.now();
-        if (nivelMartingale === 0 && (agora - ultimaEntradaTs) < INTERVALO_ENTRE_ENTRADAS_MS) return;
+        
+        // TRAVA DE 5 MINUTOS: Só bloqueia se NÃO estiver no meio de um martingale
+        if (nivelMartingale === 0 && (agora - ultimaEntradaTs) < INTERVALO_ENTRE_ENTRADAS_MS) {
+            // console.log("⏳ Aguardando tempo de respiro de 5 min...");
+            isBuscando = false;
+            return;
+        }
 
         const binaryOptions = await sdk.binaryOptions();
         const actives = binaryOptions.getActives();
@@ -182,7 +190,10 @@ async function buscarEExecutar() {
             return mercadoOk && a.canBeBoughtAt(now);
         });
 
-        if (ativosFiltrados.length === 0) return;
+        if (ativosFiltrados.length === 0) {
+            isBuscando = false;
+            return;
+        }
 
         for (let ativo of ativosFiltrados) {
             if (!global.buscando) break;
@@ -210,21 +221,23 @@ async function buscarEExecutar() {
                     }
 
                     // =========================================================
-                    // CORREÇÃO DEFINITIVA: USA durationRemainingForPurchase()
+                    // CORREÇÃO DEFINITIVA: Busca pelo tempo de expiração exato
                     // =========================================================
                     let instrumentoCorreto = available.find(inst => {
                         try {
-                            const remaining = inst.durationRemainingForPurchase();
-                            // O SDK retorna a duração restante em segundos.
-                            // Para M1, aceita margem de 5s (ex: 55s-65s)
-                            return Math.abs(remaining - seconds) <= 5;
+                            // Calcula quantos segundos faltam para a vela expirar
+                            const tempoRestante = Math.floor((inst.expiration - Date.now()) / 1000);
+                            
+                            // Para M1, aceita se faltar entre 5s e 65s. Para M5, entre 5s e 305s.
+                            const margemMaxima = seconds === 60 ? 65 : 305; 
+                            return tempoRestante > 5 && tempoRestante <= margemMaxima;
                         } catch (e) {
                             return false;
                         }
                     });
 
                     if (!instrumentoCorreto) {
-                        console.log(`⚠️ Instrumento de ${seconds}s não encontrado. Pulando ${ativo.ticker}.`);
+                        console.log(`⚠️ Instrumento de ${seconds}s não encontrado (tempo restante inválido). Pulando ${ativo.ticker}.`);
                         continue;
                     }
 
@@ -232,7 +245,10 @@ async function buscarEExecutar() {
 
                     const balances = await sdk.balances();
                     const demoBalance = balances.getBalances().find(b => b.type === 'demo');
-                    if (!demoBalance) continue;
+                    if (!demoBalance) {
+                        console.log("⚠️ Saldo demo não encontrado.");
+                        continue;
+                    }
 
                     const mult = configSolicitada.martingale_auto_multiplier || 2;
                     const entryAmount = configSolicitada.entry_amount * Math.pow(mult, nivelMartingale);
@@ -257,7 +273,7 @@ async function buscarEExecutar() {
                     };
 
                     console.log(`✅ ORDEM EXECUTADA: ${ativo.ticker} | ${direcao} | Valor: $${entryAmount.toFixed(2)} | G${nivelMartingale} | Exp: ${seconds}s`);
-                    break;
+                    break; // Para o loop e aguarda o resultado
                 } catch (err) {
                     operacaoEmAndamento = false;
                     console.error("❌ Erro ao executar:", err.message);
