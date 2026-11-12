@@ -100,7 +100,6 @@ async function verificarResultado() {
     const seconds = configSolicitada.timeframe_mode === 'M5' ? 300 : 60;
     const tempoExpiracao = seconds * 1000;
 
-    // Espera a vela fechar + 5 segundos de folga para o servidor processar
     if (agora < operacaoAtual.horarioEntradaTs + tempoExpiracao + 5000) return;
     if (operacaoAtual.resultadoChecado) return;
 
@@ -110,7 +109,6 @@ async function verificarResultado() {
 
         if (!candles || candles.length < 2) return;
 
-        // Pega a vela que já fechou (penúltima)
         const velaResultado = candles[candles.length - 2];
         let resultado = "EMPATE";
 
@@ -125,12 +123,13 @@ async function verificarResultado() {
         operacaoAtual.resultadoChecado = true;
         console.log(`📊 [RESULTADO] ${operacaoAtual.ativo} | ${operacaoAtual.direcao} | ${resultado} (G${nivelMartingale})`);
 
+        // AQUI É ONDE A TRAVA DE 5 MINUTOS É ATIVADA (ultimaEntradaTs = Date.now())
         if (resultado === "WIN") {
-            console.log(`✅ WIN! Voltando ao G0 e ativando trava de 5 minutos.`);
+            console.log(`✅ WIN! Voltando ao G0. Trava de 5 minutos ativada.`);
             nivelMartingale = 0;
             operacaoAtual = null;
             operacaoEmAndamento = false;
-            ultimaEntradaTs = Date.now(); // Ativa a trava de 5 min
+            ultimaEntradaTs = Date.now(); 
         } else if (resultado === "LOSS") {
             const galesPermitidos = configSolicitada.martingale_auto_levels || 1;
             if (nivelMartingale < galesPermitidos) {
@@ -138,20 +137,20 @@ async function verificarResultado() {
                 console.log(`❌ LOSS! Aplicando Martingale G${nivelMartingale}. Aguardando próxima vela...`);
                 operacaoAtual = null;
                 operacaoEmAndamento = false;
-                ultimaEntradaTs = 0; // ZERA A TRAVA para entrar no martingale na próxima vela
+                ultimaEntradaTs = 0; // Zera a trava para entrar no martingale na próxima vela
             } else {
-                console.log(`❌ LOSS no último gale (G${nivelMartingale}). Resetando ciclo e ativando trava de 5 minutos.`);
+                console.log(`❌ LOSS no último gale (G${nivelMartingale}). Resetando ciclo. Trava de 5 min ativada.`);
                 nivelMartingale = 0;
                 operacaoAtual = null;
                 operacaoEmAndamento = false;
-                ultimaEntradaTs = Date.now(); // Ativa a trava de 5 min
+                ultimaEntradaTs = Date.now(); 
             }
         } else {
-            console.log(`⚖️ Empate. Resetando ciclo e ativando trava de 5 minutos.`);
+            console.log(`⚖️ Empate. Resetando ciclo. Trava de 5 min ativada.`);
             nivelMartingale = 0;
             operacaoAtual = null;
             operacaoEmAndamento = false;
-            ultimaEntradaTs = Date.now(); // Ativa a trava de 5 min
+            ultimaEntradaTs = Date.now(); 
         }
 
     } catch (err) {
@@ -173,9 +172,8 @@ async function buscarEExecutar() {
 
         const agora = Date.now();
         
-        // TRAVA DE 5 MINUTOS: Só bloqueia se NÃO estiver no meio de um martingale
+        // TRAVA DE 5 MINUTOS: Só bloqueia se estiver no G0
         if (nivelMartingale === 0 && (agora - ultimaEntradaTs) < INTERVALO_ENTRE_ENTRADAS_MS) {
-            // console.log("⏳ Aguardando tempo de respiro de 5 min...");
             isBuscando = false;
             return;
         }
@@ -221,16 +219,23 @@ async function buscarEExecutar() {
                     }
 
                     // =========================================================
-                    // CORREÇÃO DEFINITIVA: Busca pelo tempo de expiração exato
+                    // LÓGICA CORRIGIDA BASEADA NO SEU bot.js
                     // =========================================================
                     let instrumentoCorreto = available.find(inst => {
                         try {
-                            // Calcula quantos segundos faltam para a vela expirar
-                            const tempoRestante = Math.floor((inst.expiration - Date.now()) / 1000);
+                            // No SDK do Quadcode, a expiração é o timestamp final.
+                            const expirationTs = inst.expiration; 
+                            const nowTs = Date.now();
                             
-                            // Para M1, aceita se faltar entre 5s e 65s. Para M5, entre 5s e 305s.
-                            const margemMaxima = seconds === 60 ? 65 : 305; 
-                            return tempoRestante > 5 && tempoRestante <= margemMaxima;
+                            // Calcula a diferença em segundos
+                            const diff = Math.floor((expirationTs - nowTs) / 1000);
+                            
+                            // Para M1 (60s): aceita se faltar entre 10 e 65 segundos.
+                            // Para M5 (300s): aceita se faltar entre 10 e 305 segundos.
+                            const margemMin = 10;
+                            const margemMax = seconds === 60 ? 65 : 305;
+
+                            return diff >= margemMin && diff <= margemMax;
                         } catch (e) {
                             return false;
                         }
@@ -242,9 +247,9 @@ async function buscarEExecutar() {
                     }
 
                     const instrument = instrumentoCorreto;
-
                     const balances = await sdk.balances();
                     const demoBalance = balances.getBalances().find(b => b.type === 'demo');
+                    
                     if (!demoBalance) {
                         console.log("⚠️ Saldo demo não encontrado.");
                         continue;
@@ -254,9 +259,10 @@ async function buscarEExecutar() {
                     const entryAmount = configSolicitada.entry_amount * Math.pow(mult, nivelMartingale);
 
                     operacaoEmAndamento = true;
-                    ultimaEntradaTs = Date.now();
                     sinalJaExecutado = signalKey;
 
+                    // NOTA: Não atualizamos ultimaEntradaTs aqui. Só atualizamos no verificarResultado (WIN/LOSS final)
+                    
                     await binaryOptions.buy(
                         instrument,
                         direcao === "CALL" ? global.BinaryOptionsDirection.Call : global.BinaryOptionsDirection.Put,
@@ -273,7 +279,7 @@ async function buscarEExecutar() {
                     };
 
                     console.log(`✅ ORDEM EXECUTADA: ${ativo.ticker} | ${direcao} | Valor: $${entryAmount.toFixed(2)} | G${nivelMartingale} | Exp: ${seconds}s`);
-                    break; // Para o loop e aguarda o resultado
+                    break; 
                 } catch (err) {
                     operacaoEmAndamento = false;
                     console.error("❌ Erro ao executar:", err.message);
@@ -287,7 +293,6 @@ async function buscarEExecutar() {
     }
 }
 
-// Mantém a função para o server.js
 async function processarSinal(signal) {
     if (operacaoEmAndamento) return console.log("⏳ Operação em andamento.");
     console.log(`📡 Sinal manual recebido: ${signal.direcao} em ${signal.ativo}`);
