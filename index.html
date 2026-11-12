@@ -8,7 +8,6 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
-
     <div class="autopilot-container">
         
         <header class="page-header">
@@ -16,6 +15,7 @@
             <p>Corretora integrada · layout configurável</p>
         </header>
 
+        <!-- CARD 1: O Holograma da IA -->
         <div class="card card-pilot">
             <div class="pilot-visual-container">
                 <img src="https://app.nextgreen.pro/autopilot-office/holographic-core-v1.webp" alt="Holograma IA" class="hologram-bg">
@@ -31,44 +31,81 @@
                         </div>
                     </div>
                     <div class="status-right">
-                        <div class="stat-mini"><span class="text-muted small">SESSÃO</span><strong>0W · 0L</strong></div>
-                        <div class="stat-mini"><span class="text-muted small">RESULTADO</span><strong class="text-green">R$ 0,00</strong></div>
+                        <div class="stat-mini">
+                            <span class="text-muted small">SESSÃO</span>
+                            <strong>0W · 0L</strong>
+                        </div>
+                        <div class="stat-mini">
+                            <span class="text-muted small">RESULTADO</span>
+                            <strong class="text-green">R$ 0,00</strong>
+                        </div>
                     </div>
                 </div>
             </div>
-
-            <!-- BOTÃO DE ATIVAR COM ID -->
+            
+            <!-- BOTÃO PRINCIPAL -->
             <button class="btn-start-pilot" id="btn-pilot" onclick="abrirModalAtivar()">
                 <i class="fa-solid fa-play"></i> Ativar análise dos AutoPilot
             </button>
             <p class="text-center text-muted small mt-10" id="pilot-help-text">Salve as alterações antes de ativar</p>
         </div>
 
+        <!-- CARD 2: Estatísticas -->
         <div class="stats-container">
-            <div class="stat-row"><div class="stat-label"><i class="fa-solid fa-chart-simple icon-green"></i> Ops sessão</div><div class="stat-value">0</div></div>
-            <div class="stat-row"><div class="stat-label"><i class="fa-solid fa-bullseye icon-green"></i> Taxa de acerto</div><div class="stat-value">—</div></div>
-            <div class="stat-row"><div class="stat-label"><i class="fa-solid fa-arrow-trend-up icon-green"></i> P/L dia</div><div class="stat-value text-green">$ 0,00</div></div>
-            <div class="stat-row"><div class="stat-label"><i class="fa-solid fa-bolt icon-green"></i> Meta dia<br><span class="text-muted small">$ 0,00 / $ 100,00</span></div><div class="stat-value">0%</div></div>
-            <div class="stat-row"><div class="stat-label text-muted">Progresso da meta diária</div><div class="stat-value text-green">0%</div></div>
+            <div class="stat-row">
+                <div class="stat-label"><i class="fa-solid fa-chart-simple icon-green"></i> Ops sessão</div>
+                <div class="stat-value">0</div>
+            </div>
+            <div class="stat-row">
+                <div class="stat-label"><i class="fa-solid fa-bullseye icon-green"></i> Taxa de acerto</div>
+                <div class="stat-value">—</div>
+            </div>
+            <div class="stat-row">
+                <div class="stat-label"><i class="fa-solid fa-arrow-trend-up icon-green"></i> P/L dia</div>
+                <div class="stat-value text-green">$ 0,00</div>
+            </div>
+            <div class="stat-row">
+                <div class="stat-label">
+                    <i class="fa-solid fa-bolt icon-green"></i> Meta dia<br>
+                    <span class="text-muted small">$ 0,00 / $ 100,00</span>
+                </div>
+                <div class="stat-value">0%</div>
+            </div>
+            <div class="stat-row">
+                <div class="stat-label text-muted">Progresso da meta diária</div>
+                <div class="stat-value text-green">0%</div>
+            </div>
         </div>
 
+        <!-- CARD 3: Operações Realizadas -->
         <div class="card accordion-card">
             <div class="card-header">
-                <div class="title-group"><i class="fa-solid fa-chart-line icon-green"></i><h3>Operações realizadas</h3></div>
+                <div class="title-group">
+                    <i class="fa-solid fa-chart-line icon-green"></i>
+                    <h3>Operações realizadas</h3>
+                </div>
                 <i class="fa-solid fa-chevron-right text-muted"></i>
             </div>
         </div>
 
+        <!-- CARD 4: Configurações Principais -->
         <div class="card">
             <div class="card-header" style="margin-bottom: 20px;">
-                <div class="title-group"><i class="fa-solid fa-gear icon-green"></i><h3>Configurações</h3></div>
+                <div class="title-group">
+                    <i class="fa-solid fa-gear icon-green"></i>
+                    <h3>Configurações</h3>
+                </div>
                 <i class="fa-solid fa-chevron-down text-muted"></i>
             </div>
 
+            <!-- Valor e Conta -->
             <div class="row-2col">
                 <div class="input-group">
                     <label>Valor de entrada</label>
-                    <div class="input-with-icon"><span>$</span><input type="number" id="entry_amount" value="5" oninput="calcularEscala()"></div>
+                    <div class="input-with-icon">
+                        <span>$</span>
+                        <input type="number" id="entry_amount" value="5" oninput="calcularEscala()">
+                    </div>
                 </div>
                 <div class="input-group">
                     <label>Tipo de conta</label>
@@ -79,6 +116,7 @@
                 </div>
             </div>
 
+            <!-- Controle de limites -->
             <div class="input-group mt-15">
                 <label>Controle de limites</label>
                 <div class="btn-toggle-group">
@@ -88,22 +126,31 @@
                 <small class="hint-text">Contadores acumulam até meia-noite</small>
             </div>
 
+            <!-- Metas -->
             <div class="row-2col mt-15">
                 <div class="input-group">
                     <label>Meta diária (lucro)</label>
-                    <div class="input-with-icon"><span>$</span><input type="number" id="daily_goal" value="100"></div>
+                    <div class="input-with-icon">
+                        <span>$</span>
+                        <input type="number" id="daily_goal" value="100">
+                    </div>
                 </div>
                 <div class="input-group">
                     <label>Stop loss diário</label>
-                    <div class="input-with-icon"><span>$</span><input type="number" id="daily_stop_loss" value="50"></div>
+                    <div class="input-with-icon">
+                        <span>$</span>
+                        <input type="number" id="daily_stop_loss" value="50">
+                    </div>
                 </div>
             </div>
 
+            <!-- Max Ops -->
             <div class="input-group mt-15">
                 <label>Máx. operações / dia</label>
                 <input type="number" id="max_ops" value="100" class="full-input">
             </div>
 
+            <!-- Tipo de Análise e Mercado -->
             <div class="row-2col mt-25">
                 <div class="input-group">
                     <label>Tipo de análise</label>
@@ -126,6 +173,7 @@
                 </div>
             </div>
 
+            <!-- Ativos -->
             <div class="input-group mt-25">
                 <label>Ativos</label>
                 <div class="assets-selector" onclick="escolherAtivos()">
@@ -135,6 +183,7 @@
                 <small class="hint-text">Por padrão todos estão selecionados. O AutoPilot só opera nos ativos marcados.</small>
             </div>
 
+            <!-- Timeframe -->
             <div class="input-group mt-25">
                 <label>Timeframe</label>
                 <div class="btn-row">
@@ -146,14 +195,28 @@
             </div>
         </div>
 
+        <!-- CARD 5: Proteções -->
         <div class="card">
             <div class="card-header" style="margin-bottom: 15px;">
-                <div class="title-group"><i class="fa-solid fa-shield-halved icon-green"></i><h3>PROTEÇÕES INTELIGENTES</h3></div>
+                <div class="title-group">
+                    <i class="fa-solid fa-shield-halved icon-green"></i>
+                    <h3>PROTEÇÕES INTELIGENTES</h3>
+                </div>
             </div>
+
             <div class="protection-grid">
-                <div class="protect-box" onclick="setProtection('fixed', this)"><h4>Fixo</h4><p>Sem proteção</p></div>
-                <div class="protect-box active" onclick="setProtection('martingale', this)"><h4>Martingale</h4><p>Dobra após loss</p></div>
-                <div class="protect-box" onclick="setProtection('soros', this)"><h4>Soros</h4><p>Reinveste lucro</p></div>
+                <div class="protect-box" onclick="setProtection('fixed', this)">
+                    <h4>Fixo</h4>
+                    <p>Sem proteção</p>
+                </div>
+                <div class="protect-box active" onclick="setProtection('martingale', this)">
+                    <h4>Martingale</h4>
+                    <p>Dobra após loss</p>
+                </div>
+                <div class="protect-box" onclick="setProtection('soros', this)">
+                    <h4>Soros</h4>
+                    <p>Reinveste lucro</p>
+                </div>
             </div>
 
             <div id="martingale-config" class="mt-20">
@@ -161,6 +224,7 @@
                     <button class="btn-toggle" onclick="setMartingaleMode('cycles', this)">Ciclos</button>
                     <button class="btn-toggle active" onclick="setMartingaleMode('auto', this)">Auto</button>
                 </div>
+
                 <div class="row-2col">
                     <div class="input-group">
                         <label>Níveis (gales)</label>
@@ -173,10 +237,17 @@
                         <small class="hint-text">Ex: 2 = dobra a cada gale</small>
                     </div>
                 </div>
+
                 <div class="scale-box mt-15">
-                    <div class="scale-header"><span>ESCALA CALCULADA</span><span class="text-green small">recalcula após salvar</span></div>
-                    <div class="scale-values" id="scale-values"></div>
+                    <div class="scale-header">
+                        <span>ESCALA CALCULADA</span>
+                        <span class="text-green small">recalcula após salvar</span>
+                    </div>
+                    <div class="scale-values" id="scale-values">
+                        <!-- Preenchido via JS -->
+                    </div>
                 </div>
+
                 <div class="info-box mt-15">
                     <i class="fa-solid fa-arrow-trend-up icon-green"></i>
                     <p id="martingale-description">Calculando...</p>
@@ -184,17 +255,19 @@
             </div>
         </div>
 
-        <div class="save-section">
-            <div class="save-warning"><strong>Alterações<br>não<br>salvas</strong><br>—<br>salve<br>antes<br>de<br>ativar<br>o<br>piloto</div>
+        <!-- CARD 6: Salvar Configurações -->
+        <div class="save-section" id="save-section">
+            <div class="save-warning">
+                <strong>Alterações<br>não<br>salvas</strong><br>—<br>salve<br>antes<br>de<br>ativar<br>o<br>piloto
+            </div>
             <button class="btn-discard" onclick="descartar()">Descartar</button>
             <button class="btn-save" onclick="salvarConfiguracoes()">
                 <i class="fa-regular fa-floppy-disk"></i> Salvar configurações
             </button>
         </div>
-
     </div>
 
-    <!-- MODAL DE CONFIRMAÇÃO -->
+    <!-- MODAL DE CONFIRMAÇÃO (Adicionado para resolver o erro do botão) -->
     <div class="modal-overlay" id="modal-ativar">
         <div class="modal-content">
             <div class="modal-header">
