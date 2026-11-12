@@ -37,7 +37,6 @@ function analisarGraficoComEstrategias(candles, modo) {
         if (ema9 < ema21 && atual.close < atual.open && rsi < 50) return "PUT";
     }
     
-    // Estratégia de Reversão (RSI + Pavio)
     const corpo = Math.abs(atual.close - atual.open);
     const pavioSuperior = atual.max - Math.max(atual.open, atual.close);
     const pavioInferior = Math.min(atual.open, atual.close) - atual.min;
@@ -62,11 +61,12 @@ async function iniciarBotServidor(window, tokenSsid, config) {
 
         console.log("✅ SDK inicializado! Robô em modo AUTOMÁTICO.");
 
+        // Loop infinito: a cada 15 segundos ele procura uma nova oportunidade
         setInterval(async () => {
             if (!isBuscando && global.buscando) {
                 await buscarEExecutar();
             }
-        }, 10000);
+        }, 15000); 
 
     } catch (error) {
         console.error("❌ Erro ao conectar no servidor:", error.message);
@@ -90,7 +90,9 @@ async function buscarEExecutar() {
         for (let ativo of ativosFiltrados) {
             if (!global.buscando) break;
 
-            const seconds = configSolicitada.timeframe === 'M5' ? 300 : 60;
+            // --- CORREÇÃO: Respeitar o Timeframe escolhido (M1 ou M5) ---
+            const seconds = configSolicitada.timeframe_mode === 'M5' ? 300 : 60;
+            
             const layer = await sdk.realTimeChartDataLayer(ativo.id, seconds);
             const candles = await layer.fetchAllCandles(Math.floor(Date.now() / 1000) - (30 * seconds));
 
@@ -99,14 +101,10 @@ async function buscarEExecutar() {
             const direcao = analisarGraficoComEstrategias(candles, configSolicitada.analysis_mode);
 
             if (direcao) {
-                console.log(`🚀 [AUTOPILOT] Sinal de ${direcao} em ${ativo.ticker}. Executando ordem...`);
+                console.log(`🚀 [AUTOPILOT] Sinal de ${direcao} em ${ativo.ticker} (${configSolicitada.timeframe_mode}). Executando ordem...`);
                 
                 try {
-                    // --- CORREÇÃO BASEADA NA DOCUMENTAÇÃO OFICIAL ---
-                    // 1. Pega os instrumentos do ativo (não usamos o ativo direto)
                     const firstActiveInstruments = await ativo.instruments();
-                    
-                    // 2. Filtra os instrumentos disponíveis para compra AGORA
                     const availableInstruments = firstActiveInstruments.getAvailableForBuyAt(sdk.currentTime());
                     
                     if (availableInstruments.length === 0) {
@@ -114,10 +112,7 @@ async function buscarEExecutar() {
                         continue;
                     }
                     
-                    // 3. Pega o primeiro instrumento disponível (ele já tem a data de expiração correta)
                     const firstInstrument = availableInstruments[0];
-                    
-                    // 4. Encontra o saldo Demo
                     const balances = await sdk.balances();
                     const demoBalance = balances.getBalances().find(b => b.type === 'demo');
                     
@@ -126,7 +121,6 @@ async function buscarEExecutar() {
                         continue;
                     }
 
-                    // 5. Executa a compra passando o INSTRUMENTO (não o tempo)
                     await binaryOptions.buy(
                         firstInstrument, 
                         direcao === "CALL" ? global.BinaryOptionsDirection.Call : global.BinaryOptionsDirection.Put, 
@@ -135,12 +129,14 @@ async function buscarEExecutar() {
                     );
                     
                     console.log(`✅ ORDEM EXECUTADA: ${ativo.ticker} | ${direcao} | Valor: $${configSolicitada.entry_amount}`);
-                    global.buscando = false; 
+                    
+                    // --- CORREÇÃO: O robô NÃO para mais. Ele continua rodando. ---
+                    // global.buscando = false;  <-- Linha removida
                     
                 } catch (err) {
                     console.error("❌ Erro ao executar ordem:", err.message);
                 }
-                break;
+                // break; <-- Removido para ele poder continuar procurando outros ativos
             }
         }
     } catch (error) {
