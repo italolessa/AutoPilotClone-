@@ -176,7 +176,7 @@ async function buscarEExecutar() {
         const now = sdk.currentTime();
         const seconds = configSolicitada.timeframe_mode === 'M5' ? 300 : 60;
 
-        // Filtro robusto de ativos (compatível com os pares principais e OTC)
+        // Filtro robusto de ativos
         let ativosFiltrados = actives.filter(a => {
             const mercadoOk = configSolicitada.mercado === 'OTC' ? a.ticker.includes('-OTC') : !a.ticker.includes('-OTC');
             const ehParValido = a.ticker.includes('EUR') || a.ticker.includes('USD') || a.ticker.includes('GBP') || a.ticker.includes('BRL') || a.ticker.includes('AUD') || a.ticker.includes('CAD');
@@ -195,7 +195,6 @@ async function buscarEExecutar() {
             if (!global.buscando) break;
             
             try {
-                // Ajuste no histórico de velas para garantir dados suficientes para M1 e M5
                 const lookbackSeconds = seconds === 300 ? (60 * 60) : (15 * 60);
                 const layer = await sdk.realTimeChartDataLayer(ativo.id, seconds);
                 const candles = await layer.fetchAllCandles(Math.floor(Date.now() / 1000) - lookbackSeconds);
