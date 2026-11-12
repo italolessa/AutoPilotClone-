@@ -1,15 +1,15 @@
 const WS_URL = 'wss://ws.trade.polariumbroker.com/echo/websocket';
 let sdk;
 let isBuscando = false;
-let configSolicitada = { timeframe: 'M1', mercado: 'OTC', analysis_mode: 'trend', entry_amount: 5, martingale_auto_levels: 1, martingale_auto_multiplier: 2 };
+let configSolicitada = { timeframe: 'M1', mercado: 'OTC', analysis_mode: 'trend', entry_amount: 5 };
 
 // --- TRAVAS DE SEGURANÇA ---
 let ultimaEntradaTs = 0;
 let operacaoEmAndamento = false;
-let operacaoAtual = null;
+let operacaoAtual = null; 
 let sinalJaExecutado = null;
-let nivelMartingale = 0;
-const INTERVALO_ENTRE_ENTRADAS_MS = 5 * 60 * 1000; // 5 minutos de respiro após WIN
+let nivelMartingale = 0; 
+const INTERVALO_ENTRE_ENTRADAS_MS = 5 * 60 * 1000; // 5 minutos
 
 // --- INDICADORES ---
 function calcularEMA(dados, period) {
@@ -39,7 +39,7 @@ function calcularRSI(closes, period = 14) {
 
 function analisarGrafico(candles, modo) {
     if (!candles || candles.length < 30) return null;
-    const fechadas = candles.slice(0, -1);
+    const fechadas = candles.slice(0, -1); 
     const closes = fechadas.map(c => c.close);
     const atual = fechadas[fechadas.length - 1];
     const rsi = calcularRSI(closes);
@@ -63,13 +63,7 @@ function analisarGrafico(candles, modo) {
 // --- INICIALIZAÇÃO ---
 async function iniciarBotServidor(window, tokenSsid, config) {
     if (!tokenSsid) return console.error("❌ Token não configurado.");
-    
-    if (config) {
-        configSolicitada = { ...configSolicitada, ...config };
-        if (!configSolicitada.timeframe_mode) {
-            configSolicitada.timeframe_mode = configSolicitada.timeframe || 'M1';
-        }
-    }
+    configSolicitada = config || configSolicitada;
     
     if (sdk) return console.log("✅ SDK já está inicializado.");
     console.log("⏳ Iniciando SDK no servidor...");
@@ -81,12 +75,14 @@ async function iniciarBotServidor(window, tokenSsid, config) {
         global.BinaryOptionsDirection = BinaryOptionsDirection;
         console.log("✅ SDK inicializado! Robô em modo AUTOMÁTICO.");
 
+        // Loop de busca
         setInterval(async () => {
             if (!isBuscando && global.buscando) {
                 await buscarEExecutar();
             }
         }, 15000);
 
+        // Loop de verificação de resultado
         setInterval(async () => {
             if (global.buscando && operacaoAtual) {
                 await verificarResultado();
@@ -104,7 +100,7 @@ async function verificarResultado() {
     const agora = Date.now();
     const seconds = configSolicitada.timeframe_mode === 'M5' ? 300 : 60;
     const tempoExpiracao = seconds * 1000;
-
+    
     if (agora < operacaoAtual.horarioEntradaTs + tempoExpiracao + 5000) return;
     if (operacaoAtual.resultadoChecado) return;
 
@@ -112,7 +108,7 @@ async function verificarResultado() {
         const layer = await sdk.realTimeChartDataLayer(operacaoAtual.ativoId, seconds);
         const candles = await layer.fetchAllCandles(Math.floor(Date.now() / 1000) - (3 * seconds));
         if (!candles || candles.length < 2) return;
-
+        
         const velaResultado = candles[candles.length - 2];
         let resultado = "EMPATE";
 
@@ -132,15 +128,15 @@ async function verificarResultado() {
             nivelMartingale = 0;
             operacaoAtual = null;
             operacaoEmAndamento = false;
-            ultimaEntradaTs = Date.now();
+            ultimaEntradaTs = Date.now(); 
         } else if (resultado === "LOSS") {
             const galesPermitidos = configSolicitada.martingale_auto_levels || 1;
             if (nivelMartingale < galesPermitidos) {
                 nivelMartingale++;
                 console.log(`❌ LOSS! Aplicando Martingale G${nivelMartingale}. Aguardando próxima vela para entrar.`);
-                operacaoAtual = null;
-                operacaoEmAndamento = false;
-                ultimaEntradaTs = 0;
+                operacaoAtual = null; 
+                operacaoEmAndamento = false; 
+                ultimaEntradaTs = 0; 
             } else {
                 console.log(`❌ LOSS no último gale (G${nivelMartingale}). Resetando ciclo.`);
                 nivelMartingale = 0;
@@ -191,7 +187,7 @@ async function buscarEExecutar() {
             if (!global.buscando) break;
             const layer = await sdk.realTimeChartDataLayer(ativo.id, seconds);
             const candles = await layer.fetchAllCandles(Math.floor(Date.now() / 1000) - (30 * seconds));
-
+            
             if (!candles || candles.length < 20) continue;
             const direcao = analisarGrafico(candles, configSolicitada.analysis_mode);
 
@@ -204,29 +200,40 @@ async function buscarEExecutar() {
                 try {
                     const instruments = await ativo.instruments();
                     const available = instruments.getAvailableForBuyAt(sdk.currentTime());
-
+                    
                     if (!available || available.length === 0) {
                         continue;
                     }
 
-                    // --- FILTRO CIRÚRGICO DE TEMPO ---
+                    // =========================================================
+                    // CORREÇÃO DEFINITIVA: FILTRA EXATAMENTE PELO TIMEFRAME
+                    // =========================================================
                     const nowTs = Date.now();
                     let instrumentoCorreto = available.find(inst => {
                         try {
                             const endTime = inst.purchaseEndTime();
+                            const startTime = inst.purchaseStartTime ? inst.purchaseStartTime() : nowTs;
                             const diffSeconds = Math.round((endTime.getTime() - nowTs) / 1000);
-                            // Procura o tempo exato com margem de 3 segundos
-                            return Math.abs(diffSeconds - seconds) <= 3;
+                            
+                            // Valida se o tempo de expiração confere exatamente com o configurado (com margem de 5s)
+                            return Math.abs(diffSeconds - seconds) <= 5;
                         } catch (e) {
-                            return false;
+                            try {
+                                const period = inst.period ? inst.period() : 0;
+                                return period === seconds;
+                            } catch (err) {
+                                return false;
+                            }
                         }
                     });
 
-                    // SE NÃO ENCONTRAR O TEMPO CERTO, CANCELA A OPERAÇÃO
                     if (!instrumentoCorreto) {
-                        console.log(`❌ Instrumento de ${seconds}s não disponível no exato momento para ${ativo.ticker}. Abortando esta entrada.`);
-                        continue;
+                        console.log(`❌ Instrumento de ${seconds}s não encontrado para ${ativo.ticker}. Pulando entrada.`);
+                        continue; // Impede o fallback de pegar qualquer tempo aleatório
                     }
+
+                    const instrument = instrumentoCorreto;
+                    // =========================================================
 
                     const balances = await sdk.balances();
                     const demoBalance = balances.getBalances().find(b => b.type === 'demo');
@@ -240,7 +247,7 @@ async function buscarEExecutar() {
                     sinalJaExecutado = signalKey;
 
                     await binaryOptions.buy(
-                        instrumentoCorreto,
+                        instrument,
                         direcao === "CALL" ? global.BinaryOptionsDirection.Call : global.BinaryOptionsDirection.Put,
                         entryAmount,
                         demoBalance
@@ -269,6 +276,7 @@ async function buscarEExecutar() {
     }
 }
 
+// Mantém a função para o server.js
 async function processarSinal(signal) {
     if (operacaoEmAndamento) return console.log("⏳ Operação em andamento.");
     console.log(`📡 Sinal manual recebido: ${signal.direcao} em ${signal.ativo}`);
