@@ -6,9 +6,9 @@ let configSolicitada = { timeframe: 'M1', mercado: 'OTC', analysis_mode: 'trend'
 // --- TRAVAS DE SEGURANÇA ---
 let ultimaEntradaTs = 0;
 let operacaoEmAndamento = false;
-let operacaoAtual = null;
+let operacaoAtual = null; 
 let sinalJaExecutado = null;
-let nivelMartingale = 0;
+let nivelMartingale = 0; 
 const INTERVALO_ENTRE_ENTRADAS_MS = 5 * 60 * 1000; // 5 minutos
 
 // --- INDICADORES ---
@@ -39,7 +39,7 @@ function calcularRSI(closes, period = 14) {
 
 function analisarGrafico(candles, modo) {
     if (!candles || candles.length < 30) return null;
-    const fechadas = candles.slice(0, -1);
+    const fechadas = candles.slice(0, -1); 
     const closes = fechadas.map(c => c.close);
     const atual = fechadas[fechadas.length - 1];
     const rsi = calcularRSI(closes);
@@ -64,10 +64,10 @@ function analisarGrafico(candles, modo) {
 async function iniciarBotServidor(window, tokenSsid, config) {
     if (!tokenSsid) return console.error("❌ Token não configurado.");
     configSolicitada = config || configSolicitada;
-
+    
     if (sdk) return console.log("✅ SDK já está inicializado.");
-
     console.log("⏳ Iniciando SDK no servidor...");
+
     try {
         const sdkModule = await import('@quadcode-tech/client-sdk-js');
         const { ClientSdk, SsidAuthMethod, BinaryOptionsDirection } = sdkModule;
@@ -75,12 +75,14 @@ async function iniciarBotServidor(window, tokenSsid, config) {
         global.BinaryOptionsDirection = BinaryOptionsDirection;
         console.log("✅ SDK inicializado! Robô em modo AUTOMÁTICO.");
 
+        // Loop de busca
         setInterval(async () => {
             if (!isBuscando && global.buscando) {
                 await buscarEExecutar();
             }
         }, 15000);
 
+        // Loop de verificação de resultado
         setInterval(async () => {
             if (global.buscando && operacaoAtual) {
                 await verificarResultado();
@@ -95,20 +97,18 @@ async function iniciarBotServidor(window, tokenSsid, config) {
 // --- VERIFICAR RESULTADO E MARTINGALE ---
 async function verificarResultado() {
     if (!operacaoAtual) return;
-
     const agora = Date.now();
     const seconds = configSolicitada.timeframe_mode === 'M5' ? 300 : 60;
     const tempoExpiracao = seconds * 1000;
-
+    
     if (agora < operacaoAtual.horarioEntradaTs + tempoExpiracao + 5000) return;
     if (operacaoAtual.resultadoChecado) return;
 
     try {
         const layer = await sdk.realTimeChartDataLayer(operacaoAtual.ativoId, seconds);
         const candles = await layer.fetchAllCandles(Math.floor(Date.now() / 1000) - (3 * seconds));
-
         if (!candles || candles.length < 2) return;
-
+        
         const velaResultado = candles[candles.length - 2];
         let resultado = "EMPATE";
 
@@ -128,15 +128,15 @@ async function verificarResultado() {
             nivelMartingale = 0;
             operacaoAtual = null;
             operacaoEmAndamento = false;
-            ultimaEntradaTs = Date.now();
+            ultimaEntradaTs = Date.now(); 
         } else if (resultado === "LOSS") {
             const galesPermitidos = configSolicitada.martingale_auto_levels || 1;
             if (nivelMartingale < galesPermitidos) {
                 nivelMartingale++;
-                console.log(`❌ LOSS! Aplicando Martingale G${nivelMartingale}. Aguardando próxima vela...`);
-                operacaoAtual = null;
-                operacaoEmAndamento = false;
-                ultimaEntradaTs = 0;
+                console.log(`❌ LOSS! Aplicando Martingale G${nivelMartingale}. Aguardando próxima vela para entrar.`);
+                operacaoAtual = null; 
+                operacaoEmAndamento = false; 
+                ultimaEntradaTs = 0; 
             } else {
                 console.log(`❌ LOSS no último gale (G${nivelMartingale}). Resetando ciclo.`);
                 nivelMartingale = 0;
@@ -151,7 +151,6 @@ async function verificarResultado() {
             operacaoEmAndamento = false;
             ultimaEntradaTs = Date.now();
         }
-
     } catch (err) {
         console.error("❌ Erro ao verificar resultado:", err.message);
         operacaoEmAndamento = false;
@@ -186,12 +185,10 @@ async function buscarEExecutar() {
 
         for (let ativo of ativosFiltrados) {
             if (!global.buscando) break;
-
             const layer = await sdk.realTimeChartDataLayer(ativo.id, seconds);
             const candles = await layer.fetchAllCandles(Math.floor(Date.now() / 1000) - (30 * seconds));
-
+            
             if (!candles || candles.length < 20) continue;
-
             const direcao = analisarGrafico(candles, configSolicitada.analysis_mode);
 
             if (direcao) {
@@ -203,17 +200,35 @@ async function buscarEExecutar() {
                 try {
                     const instruments = await ativo.instruments();
                     const available = instruments.getAvailableForBuyAt(sdk.currentTime());
-
+                    
                     if (!available || available.length === 0) {
-                        console.log(`⚠️ Nenhum instrumento disponível para ${ativo.ticker} agora.`);
                         continue;
                     }
 
                     // =========================================================
-                    // CORREÇÃO DEFINITIVA (DOC OFICIAL): USA O PRIMEIRO DISPONÍVEL
-                    // O SDK já retorna o instrumento com o tempo correto.
+                    // CORREÇÃO DEFINITIVA: FILTRA PELA DATA DE EXPIRAÇÃO REAL
                     // =========================================================
-                    const instrument = available[0];
+                    const nowTs = Date.now();
+                    let instrumentoCorreto = available.find(inst => {
+                        try {
+                            const endTime = inst.purchaseEndTime(); // Pega a data de fechamento
+                            const diffSeconds = Math.round((endTime.getTime() - nowTs) / 1000);
+                            // Aceita se estiver a até 3 segundos de diferença (ex: 59s ou 61s)
+                            return Math.abs(diffSeconds - seconds) <= 3;
+                        } catch (e) {
+                            return false;
+                        }
+                    });
+
+                    if (!instrumentoCorreto) {
+                        // Fallback: se não achar o exato, ele tenta pegar o primeiro
+                        // (Só para garantir que não trave, mas o log vai avisar)
+                        console.log(`⚠️ Instrumento de ${seconds}s não encontrado para ${ativo.ticker}. Tentando o primeiro disponível.`);
+                        instrumentoCorreto = available[0];
+                    }
+
+                    const instrument = instrumentoCorreto;
+                    // =========================================================
 
                     const balances = await sdk.balances();
                     const demoBalance = balances.getBalances().find(b => b.type === 'demo');
