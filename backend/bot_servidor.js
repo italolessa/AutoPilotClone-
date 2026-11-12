@@ -65,14 +65,15 @@ async function iniciarBotServidor(window, tokenSsid, config) {
         global.BinaryOptionsDirection = BinaryOptionsDirection;
         console.log("✅ SDK inicializado!");
 
+        // Mantém o servidor WebSocket na porta 8080
         const wss = new WebSocket.Server({ port: 8080 });
         wss.on('connection', (ws) => {
-            console.log("🔗 Cérebro conectado ao server.js");
+            console.log("🔗 Cérebro conectado ao server.js via WebSocket.");
             ws.on('message', async (msg) => {
                 try {
                     const data = JSON.parse(msg);
                     if (data.type === 'SIGNAL') await processarSinal(data.signal);
-                } catch (e) { console.error(e.message); }
+                } catch (e) { console.error("Erro ao processar msg WS:", e.message); }
             });
         });
     } catch (error) {
@@ -84,7 +85,7 @@ async function processarSinal(signal) {
     if (operacaoEmAndamento) return console.log("⏳ Operação em andamento. Ignorando.");
     if (sinaisAgendados.has(signal.id)) return console.log("⏳ Sinal já agendado.");
 
-    console.log(`📡 Sinal recebido: ${signal.direcao} em ${signal.ativo} às ${signal.horario_entrada}`);
+    console.log(`📡 Sinal recebido via WS: ${signal.direcao} em ${signal.ativo} às ${signal.horario_entrada}`);
 
     const now = new Date();
     const [h, m] = signal.horario_entrada.split(':');

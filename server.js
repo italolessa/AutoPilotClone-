@@ -38,10 +38,12 @@ app.post('/api/autopilot/activate', (req, res) => {
     global.buscando = true;
     console.log("🤖 AutoPilot ATIVADO.");
 
-    if (!wsClient) {
-        wsClient = new WebSocket('ws://localhost:8080');
-        wsClient.on('open', () => console.log("🔗 Conectado ao Cérebro."));
+    // Conecta ao WebSocket interno (127.0.0.1 resolve o problema do localhost no Render)
+    if (!wsClient || wsClient.readyState === WebSocket.CLOSED) {
+        wsClient = new WebSocket('ws://127.0.0.1:8080');
+        wsClient.on('open', () => console.log("🔗 Conectado ao Cérebro via WebSocket."));
         wsClient.on('error', (e) => console.error("❌ Erro WS:", e.message));
+        wsClient.on('close', () => console.log("🔌 WebSocket fechado."));
     }
 
     const { iniciarBotServidor } = require('./backend/bot_servidor');
@@ -52,6 +54,7 @@ app.post('/api/autopilot/activate', (req, res) => {
 app.post('/api/autopilot/deactivate', (req, res) => {
     autopilotActive = false;
     global.buscando = false;
+    if (wsClient) wsClient.close();
     console.log("🛑 AutoPilot DESATIVADO.");
     res.json({ success: true });
 });
@@ -62,7 +65,7 @@ app.post('/api/sinal', (req, res) => {
 
     console.log(`📡 Sinal do Frontend: ${sinal.direcao} em ${sinal.ativo}`);
 
-    if (autopilotActive && wsClient?.readyState === WebSocket.OPEN) {
+    if (autopilotActive && wsClient && wsClient.readyState === WebSocket.OPEN) {
         wsClient.send(JSON.stringify({ type: 'SIGNAL', signal: sinal }));
         res.json({ success: true });
     } else {
