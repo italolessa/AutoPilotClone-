@@ -6,8 +6,10 @@ let configSolicitada = { timeframe: 'M1', mercado: 'OTC', analysis_mode: 'trend'
 // --- TRAVAS DE SEGURANÇA ---
 let ultimaEntradaTs = 0;
 let operacaoEmAndamento = false;
+let operacaoAtual = null; // Guarda os dados da ordem aberta para saber o resultado
 let timeoutLiberacao = null;
 let sinalJaExecutado = null;
+let nivelMartingale = 0; // 0 = G0, 1 = G1, etc.
 const INTERVALO_ENTRE_ENTRADAS_MS = 5 * 60 * 1000; // 5 minutos
 
 // --- INDICADORES ---
@@ -38,7 +40,7 @@ function calcularRSI(closes, period = 14) {
 
 function analisarGrafico(candles, modo) {
     if (!candles || candles.length < 30) return null;
-    const fechadas = candles.slice(0, -1); // ignora vela em formação
+    const fechadas = candles.slice(0, -1);
     const closes = fechadas.map(c => c.close);
     const atual = fechadas[fechadas.length - 1];
     const rsi = calcularRSI(closes);
@@ -74,15 +76,99 @@ async function iniciarBotServidor(window, tokenSsid, config) {
         global.BinaryOptionsDirection = BinaryOptionsDirection;
         console.log("✅ SDK inicializado! Robô em modo AUTOMÁTICO.");
 
-        // Loop de análise: roda a cada 15 segundos
+        // Loop de busca de sinais
         setInterval(async () => {
             if (!isBuscando && global.buscando) {
                 await buscarEExecutar();
             }
         }, 15000);
 
+        // NOVO: Loop de verificação de resultado (roda a cada 5 segundos)
+        setInterval(async () => {
+            if (global.buscando && operacaoAtual) {
+                await verificarResultado();
+            }
+        }, 5000);
+
     } catch (error) {
         console.error("❌ Erro ao conectar SDK:", error.message);
+    }
+}
+
+// --- VERIFICAR RESULTADO E MARTINGALE ---
+async function verificarResultado() {
+    if (!operacaoAtual) return;
+
+    // Se já passou o tempo de expiração + 5 segundos
+    const agora = Date.now();
+    const tempoExpiracao = (configSolicitada.timeframe_mode === 'M5' ? 300 : 60) * 1000;
+    
+    if (agora < operacaoAtual.horarioEntradaTs + tempoExpiracao + 5000) {
+        return; // Ainda está no tempo da vela
+    }
+
+    // Se já checou o resultado desta ordem
+    if (operacaoAtual.resultadoChecado) return;
+
+    try {
+        const seconds = configSolicitada.timeframe_mode === 'M5' ? 300 : 60;
+        const layer = await sdk.realTimeChartDataLayer(operacaoAtual.ativoId, seconds);
+        // Pega as últimas 3 velas para ver a que fechou
+        const candles = await layer.fetchAllCandles(Math.floor(Date.now() / 1000) - (3 * seconds));
+        
+        if (!candles || candles.length < 2) return;
+
+        // A vela anterior (candles[candles.length - 2]) é a que a nossa ordem estava dentro
+        const velaResultado = candles[candles.length - 2];
+        let resultado = "EMPATE";
+
+        if (operacaoAtual.direcao === "CALL") {
+            if (velaResultado.close > velaResultado.open) resultado = "WIN";
+            else if (velaResultado.close < velaResultado.open) resultado = "LOSS";
+        } else if (operacaoAtual.direcao === "PUT") {
+            if (velaResultado.close < velaResultado.open) resultado = "WIN";
+            else if (velaResultado.close > velaResultado.open) resultado = "LOSS";
+        }
+
+        operacaoAtual.resultadoChecado = true;
+        console.log(`📊 [RESULTADO] ${operacaoAtual.ativo} | ${operacaoAtual.direcao} | ${resultado} (G${nivelMartingale})`);
+
+        if (resultado === "WIN") {
+            // WIN: Reseta o martingale, libera o cooldown de 5 min
+            console.log(`✅ WIN! Voltando ao G0 e aguardando 5 minutos de respiro.`);
+            nivelMartingale = 0;
+            operacaoAtual = null;
+            operacaoEmAndamento = false;
+            ultimaEntradaTs = Date.now(); // Marca o fim do ciclo para os 5 min
+        } else if (resultado === "LOSS") {
+            // LOSS: Prepara o Martingale (dobra o valor)
+            const galesPermitidos = configSolicitada.martingale_auto_levels || 1;
+            if (nivelMartingale < galesPermitidos) {
+                nivelMartingale++;
+                console.log(`❌ LOSS! Aplicando Martingale G${nivelMartingale}. Aguardando próxima vela para entrar.`);
+                // Não libera operacaoEmAndamento. A próxima entrada será o martingale.
+                operacaoAtual = null; // Limpa a ordem atual, mas mantém o robô travado
+                ultimaEntradaTs = 0; // Zera o cooldown para poder entrar imediatamente
+            } else {
+                console.log(`❌ LOSS no último gale (G${nivelMartingale}). Resetando ciclo.`);
+                nivelMartingale = 0;
+                operacaoAtual = null;
+                operacaoEmAndamento = false;
+                ultimaEntradaTs = Date.now();
+            }
+        } else {
+            // Empate
+            console.log(`⚖️ Empate. Resetando ciclo.`);
+            nivelMartingale = 0;
+            operacaoAtual = null;
+            operacaoEmAndamento = false;
+            ultimaEntradaTs = Date.now();
+        }
+
+    } catch (err) {
+        console.error("❌ Erro ao verificar resultado:", err.message);
+        operacaoEmAndamento = false;
+        operacaoAtual = null;
     }
 }
 
@@ -100,9 +186,9 @@ async function buscarEExecutar() {
             return;
         }
 
-        // Trava 2: Cooldown de 5 minutos
+        // Trava 2: Cooldown de 5 minutos (Só bloqueia se estivermos no G0 e o tempo não passou)
         const agora = Date.now();
-        if ((agora - ultimaEntradaTs) < INTERVALO_ENTRE_ENTRADAS_MS) {
+        if (nivelMartingale === 0 && (agora - ultimaEntradaTs) < INTERVALO_ENTRE_ENTRADAS_MS) {
             return;
         }
 
@@ -110,7 +196,6 @@ async function buscarEExecutar() {
         const actives = binaryOptions.getActives();
         const now = sdk.currentTime();
         
-        // Define o tempo para buscar os candles (M1 = 60, M5 = 300)
         const seconds = configSolicitada.timeframe_mode === 'M5' ? 300 : 60;
 
         const ativosFiltrados = actives.filter(a => {
@@ -134,10 +219,9 @@ async function buscarEExecutar() {
                 const signalKey = `${ativo.id}-${candles[candles.length - 2].time}-${direcao}`;
                 if (sinalJaExecutado === signalKey) continue;
 
-                console.log(`🚀 [AUTOPILOT] Sinal de ${direcao} em ${ativo.ticker} (${configSolicitada.timeframe_mode}). Executando...`);
+                console.log(`🚀 [AUTOPILOT] Sinal de ${direcao} em ${ativo.ticker} (${configSolicitada.timeframe_mode}). Executando G${nivelMartingale}...`);
 
                 try {
-                    // Pega os instrumentos disponíveis e usa o primeiro (como o original)
                     const instruments = await ativo.instruments();
                     const available = instruments.getAvailableForBuyAt(sdk.currentTime());
                     
@@ -152,6 +236,10 @@ async function buscarEExecutar() {
                     const demoBalance = balances.getBalances().find(b => b.type === 'demo');
                     if (!demoBalance) continue;
 
+                    // Calcula o valor da entrada (Martingale dobra)
+                    const mult = configSolicitada.martingale_auto_multiplier || 2;
+                    const entryAmount = configSolicitada.entry_amount * Math.pow(mult, nivelMartingale);
+
                     operacaoEmAndamento = true;
                     ultimaEntradaTs = Date.now();
                     sinalJaExecutado = signalKey;
@@ -159,19 +247,21 @@ async function buscarEExecutar() {
                     await binaryOptions.buy(
                         instrument,
                         direcao === "CALL" ? global.BinaryOptionsDirection.Call : global.BinaryOptionsDirection.Put,
-                        configSolicitada.entry_amount,
+                        entryAmount,
                         demoBalance
                     );
 
-                    console.log(`✅ ORDEM EXECUTADA: ${ativo.ticker} | ${direcao} | $${configSolicitada.entry_amount}`);
-                    
-                    if (timeoutLiberacao) clearTimeout(timeoutLiberacao);
-                    timeoutLiberacao = setTimeout(() => {
-                        operacaoEmAndamento = false;
-                        sinalJaExecutado = null;
-                        console.log(`🔄 Ciclo de 5 minutos finalizado.`);
-                    }, 300000);
+                    // Salva os dados da operação para verificar o resultado depois
+                    operacaoAtual = {
+                        ativoId: ativo.id,
+                        ativo: ativo.ticker,
+                        direcao: direcao,
+                        horarioEntradaTs: Date.now(),
+                        resultadoChecado: false
+                    };
 
+                    console.log(`✅ ORDEM EXECUTADA: ${ativo.ticker} | ${direcao} | Valor: $${entryAmount.toFixed(2)} | G${nivelMartingale}`);
+                    
                     break;
                 } catch (err) {
                     operacaoEmAndamento = false;
@@ -192,5 +282,4 @@ async function processarSinal(signal) {
     console.log(`📡 Sinal manual recebido: ${signal.direcao} em ${signal.ativo}`);
 }
 
-// ESTA É A LINHA QUE FALTAVA E RESOLVE O ERRO:
 module.exports = { iniciarBotServidor, processarSinal };
