@@ -176,51 +176,62 @@ async function buscarEExecutar() {
         const now = sdk.currentTime();
         const seconds = configSolicitada.timeframe_mode === 'M5' ? 300 : 60;
 
-        const ativosFiltrados = actives.filter(a => {
+        // Filtro robusto de ativos (compatível com os pares principais e OTC)
+        let ativosFiltrados = actives.filter(a => {
             const mercadoOk = configSolicitada.mercado === 'OTC' ? a.ticker.includes('-OTC') : !a.ticker.includes('-OTC');
-            return mercadoOk && a.canBeBoughtAt(now);
+            const ehParValido = a.ticker.includes('EUR') || a.ticker.includes('USD') || a.ticker.includes('GBP') || a.ticker.includes('BRL') || a.ticker.includes('AUD') || a.ticker.includes('CAD');
+            return mercadoOk && ehParValido;
         });
 
-        if (ativosFiltrados.length === 0) return;
+        if (ativosFiltrados.length === 0) {
+            isBuscando = false;
+            return;
+        }
+
+        // Embaralha para alternar os pares varridos
+        ativosFiltrados.sort(() => 0.5 - Math.random());
 
         for (let ativo of ativosFiltrados) {
             if (!global.buscando) break;
-            const layer = await sdk.realTimeChartDataLayer(ativo.id, seconds);
-            const candles = await layer.fetchAllCandles(Math.floor(Date.now() / 1000) - (30 * seconds));
             
-            if (!candles || candles.length < 20) continue;
-            const direcao = analisarGrafico(candles, configSolicitada.analysis_mode);
+            try {
+                // Ajuste no histórico de velas para garantir dados suficientes para M1 e M5
+                const lookbackSeconds = seconds === 300 ? (60 * 60) : (15 * 60);
+                const layer = await sdk.realTimeChartDataLayer(ativo.id, seconds);
+                const candles = await layer.fetchAllCandles(Math.floor(Date.now() / 1000) - lookbackSeconds);
+                
+                if (!candles || candles.length < 25) continue;
+                
+                const direcao = analisarGrafico(candles, configSolicitada.analysis_mode);
 
-            if (direcao) {
-                const signalKey = `${ativo.id}-${candles[candles.length - 2].time}-${direcao}`;
-                if (sinalJaExecutado === signalKey) continue;
+                if (direcao) {
+                    const velaReferencia = candles[candles.length - 2] || candles[candles.length - 1];
+                    const signalKey = `${ativo.id}-${velaReferencia.time || Date.now()}-${direcao}`;
+                    if (sinalJaExecutado === signalKey) continue;
 
-                console.log(`🚀 [AUTOPILOT] Sinal de ${direcao} em ${ativo.ticker} (${configSolicitada.timeframe_mode}). Executando G${nivelMartingale}...`);
+                    console.log(`🚀 [AUTOPILOT] Sinal de ${direcao} em ${ativo.ticker} (${configSolicitada.timeframe_mode}). Executando G${nivelMartingale}...`);
 
-                try {
                     const instruments = await ativo.instruments();
                     const available = instruments.getAvailableForBuyAt(sdk.currentTime());
                     
-                    if (!available || available.length === 0) {
-                        continue;
-                    }
+                    if (!available || available.length === 0) continue;
 
-                    // --- A CORREÇÃO DA TRAVA DE SEGURANÇA ---
-                    // Filtra APENAS o instrumento com o tempo exato.
-                    // Se não achar, o 'find' retorna undefined.
+                    // Validação de expiração por janela de tolerância de segundos
                     const instrumentoCorreto = available.find(inst => {
-                        // O SDK da Quadcode usa o campo 'expirationSize' para o tempo em segundos
-                        return inst.expirationSize === seconds;
+                        const diff = (inst.expiration - now) / 1000;
+                        if (seconds === 300) {
+                            return diff >= 290 && diff <= 315;
+                        }
+                        return diff >= 55 && diff <= 65;
                     });
 
-                    // Se NÃO achou o tempo exato, pula este ativo e NÃO envia a ordem
                     if (!instrumentoCorreto) {
-                        console.log(`❌ Instrumento de ${seconds}s indisponível no milissegundo exato para ${ativo.ticker}. Pulando para o próximo...`);
+                        console.log(`❌ Instrumento de expiração para ${seconds}s indisponível no momento para ${ativo.ticker}. Pulando...`);
                         continue; 
                     }
 
                     const balances = await sdk.balances();
-                    const demoBalance = balances.getBalances().find(b => b.type === 'demo');
+                    const demoBalance = balances.getBalances().find(b => b.type === 'demo') || balances.getBalances()[0];
                     if (!demoBalance) continue;
 
                     const mult = configSolicitada.martingale_auto_multiplier || 2;
@@ -231,7 +242,7 @@ async function buscarEExecutar() {
                     sinalJaExecutado = signalKey;
 
                     await binaryOptions.buy(
-                        instrumentoCorreto, // Envia a ordem com o instrumento exato
+                        instrumentoCorreto,
                         direcao === "CALL" ? global.BinaryOptionsDirection.Call : global.BinaryOptionsDirection.Put,
                         entryAmount,
                         demoBalance
@@ -247,10 +258,10 @@ async function buscarEExecutar() {
 
                     console.log(`✅ ORDEM EXECUTADA: ${ativo.ticker} | ${direcao} | Valor: $${entryAmount.toFixed(2)} | G${nivelMartingale} | Exp: ${seconds}s`);
                     break;
-                } catch (err) {
-                    operacaoEmAndamento = false;
-                    console.error("❌ Erro ao executar:", err.message);
                 }
+            } catch (innerErr) {
+                // Continua para o próximo ativo caso ocorra erro em um par específico
+                continue;
             }
         }
     } catch (error) {
